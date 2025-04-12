@@ -1,0 +1,1 @@
+Implement and improve the model code. Respond with the full python script as provided, but you are only allowed to change lines within the <model> and </model> tags. Make sure variable names are consistent with the rest of the script.

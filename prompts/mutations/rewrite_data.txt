@@ -1,0 +1,1 @@
+Improve the data code. Respond with the full python script as provided, but you are only allowed to change lines within the <data> and </data> tags. Make sure variable names are consistent with the rest of the script.

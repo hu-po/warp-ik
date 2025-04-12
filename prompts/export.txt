@@ -1,0 +1,3 @@
+Your task is to format the code, removing any unnecessary elements while keeping the essential functionality intact. Follow these steps:
+Remove all asserts, WandB logging, and code related to visualizations.
+Set compute_backend to "kaggle".

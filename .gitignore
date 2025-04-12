@@ -1,0 +1,51 @@
+# Build directories
+build/
+bin/
+*.o
+*.obj
+
+# Executables
+gemini
+grok
+gpt
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# CUDA specific
+*.ptx
+*.cubin
+*.fatbin
+*.fatbin.c
+*.fatbin.h
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+
+# Temporary files
+*.log
+*.tmp
+*.bak
+
+# USD files
+*.usd
+*.usda
+*.usdc
+*.usdz
+*.usd.gz
+*.usd.zip
+*.usd.bz2
+
+# Assets
+assets/
