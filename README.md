@@ -1,51 +1,73 @@
-# evoarc 🧫🔬
+# warp-ik 🦾🦾🦾🦾🦾🦾
 
-**Evo**lutionary Code generation for **ARC**-AGI Kaggle Challenge
+# `i`nverse `k`inematic solution evolution using nvidia `warp`
 
-## Abstract
+uses an llm (e.g. claude,gpt,xai,gemini) to rewrite and improve the code solution to a multi-robot parallel inverse kinematics problem. Iterative rounds to improve solutions, called `morphs`, which are run in docker containers and compete to get the highest score. A basic evolutionary algorithm with mutation and selection improves the morphs over time.
 
-uses an agent (e.g. claude sonnet, gpt 4o, etc) to rewrite the model and training pipeline for a deep-learning notebook solution to the arc-agi 2024 kaggle challenge. solutions, called `morphs` are run in docker containers and compete to get the highest eval accuracy. a basic evolutionary algorithm with mutation and selection improves the morphs over time.
-
-various types of compute were used
-
-- `ojo` - a local nvidia agx orin
-- `oop` - a local linux pc with nvidia 3090
-- `big` - a cloud instance with 1xH100
-- `kag` - a cloud kaggle nb with 4xT4
-
-## Setup
-
-first ssh into your machine and setup the environment (must have docker installed)
+one-liner
 
 ```bash
-git clone https://github.com/hu-po/evoarc
-pip install nbformat arxiv wandb
-export WANDB_API_KEY=...
-```
-
-depending on what models you want to use as the agent, setup your keys:
-
-```bash
-pip install replicate
-export REPLICATE_API_TOKEN=...
-pip install openai 
-export OPENAI_API_KEY=...
-pip install anthropic
-export ANTHROPIC_API_KEY=...
+git clone https://github.com/hu-po/warp-ik-evo.git && \
+cd warp-ik-evo && \
+uv venv && \
+source .venv/bin/activate && \
+uv pip install -e . && \
+uv run python /root/src/evolve.py --seed 42 --device 0
 ```
 
 ## Usage
 
-run the morph `foo` locally on `oop`:
+run the morph `ik_6d` locally on `x86`:
 
 ```bash
-./scripts/test.sh oop foo
+./scripts/test.sh x86 ik_6d
 ```
 
-start the evolutionary process using `foo` as the protomorph:
+install python dependencies and run cloth sim creation
 
 ```bash
-python3 evolve.py --seed 42 --compute_backend oop --protomorphs foo
+cd warp
+uv venv && source .venv/bin/activate
+uv pip install warp-lang[extras]
+# for arm agx orin cuda11
+uv pip install https://github.com/NVIDIA/warp/releases/download/v1.7.0/warp_lang-1.7.0+cu11-py3-none-manylinux2014_aarch64.whl
+uv run python cloth.py
+uv run python ik.py
+```
+
+use usd viewer to view the cloth sim
+download binaries from https://developer.nvidia.com/usd?sortBy=developer_learning_library%2Fsort%2Ffeatured_in.usd_resources%3Adesc%2Ctitle%3Aasc#section-getting-started
+
+```bash
+sudo apt-get install libxkbcommon-x11-0 libxcb-xinerama0 libxcb-image0 libxcb-shape0 libxcb-render-util0 libxcb-icccm4 libxcb-keysyms1
+unzip ~/Downloads/usd.py310.linux-x86_64.usdview.release-0.25.02-ba8aaf1f.zip -d ~/dev/usd
+/home/oop/dev/usd/scripts/usdview_gui.sh /home/oop/dev/cu/warp/cloth.usd
+/home/oop/dev/usd/scripts/usdview_gui.sh /home/oop/dev/cu/warp/ik.usd
+```
+
+Scroll in with mousewheel
+Use <space> to play and pause
+Use <alt>+<left click> to rotate the camera
+Use <ctrl>+<6> for geometry view
+
+# Using a custom URDF
+
+IK example but with trossen widowx arm
+
+```bash
+cd ~/dev # this is where I keep my repos
+git clone https://github.com/TrossenRobotics/trossen_arm_description.git
+# ik with custom URDF requires trimesh
+uv pip install trimesh
+uv run python ik_trossen.py
+/home/oop/dev/usd/scripts/usdview_gui.sh /home/oop/dev/cu/warp/ik_trossen.usd
+```
+
+
+start the evolutionary process using `ik_6d` as the protomorph, creates a morphline:
+
+```bash
+python3 evolve.py --seed 42 --device device --protomorphs ik_6d
 ```
 
 mutate a single morph:
@@ -60,46 +82,11 @@ clean out the output directory:
 ./scripts/clean.sh
 ```
 
-to submit a morph to kaggle you need to "create a notebook" from the ["code" page](https://www.kaggle.com/competitions/arc-prize-2024/code) and paste in the code for your morph from `output/foo/export.ipynb`. then click "save version" and make sure to disable internet. then go to the ["submit" page](https://www.kaggle.com/competitions/arc-prize-2024/submit) and hit "submit prediction".
-
-## References
-
-ARC-AGI Challenge
-- https://arcprize.org/
-- https://www.kaggle.com/competitions/arc-prize-2024
-- https://x.com/fchollet
-- https://x.com/arcprize
-
-CAX: Cellular Automata Accelerated in JAX
-- https://arxiv.org/pdf/2410.02651.pdf
-- https://github.com/maxencefaldor/cax
-
-Tackling the Abstraction and Reasoning Corpus with Vision Transformers: the Importance of 2D Representation, Positions, and Objects
-- https://arxiv.org/abs/2410.06405
-
-Lambda Cloud
-- https://cloud.lambdalabs.com/instances
-
-Dev
-- https://uithub.com/
-- https://chatgpt.com/
-- https://claude.ai/
-- https://wandb.ai/hug/evoarc
-
-Videos
--https://youtu.be/3ZTNps2PraM
-
-## Video
-
-[![YouTube Video](https://img.youtube.com/vi/9J1Ofd1gYIk/0.jpg)](https://www.youtube.com/watch?v=9J1Ofd1gYIk)
-
-## Citation
-
 ```
-@misc{hupo2024evoarc,
-  title={EvoARC: Evolutionary Code generation for ARC-AGI Kaggle Challenge},
+@misc{hupo2025warpik,
+  title={warp-ik-evo: inverse kinematics solution evolution},
   author={Hugo Ponte},
-  year={2024},
-  url={https://github.com/hu-po/evoarc}
+  year={2025},
+  url={https://github.com/hu-po/warp-ik-evo}
 }
 ```

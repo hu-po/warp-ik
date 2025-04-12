@@ -49,3 +49,18 @@ Makefile
 
 # Assets
 assets/
+
+# .env
+.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+
+# UV
+.venv/
+uv.lock
