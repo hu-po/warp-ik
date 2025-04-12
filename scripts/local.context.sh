@@ -22,6 +22,7 @@ done
 declare -A DIRECTORIES=(
   ["docker"]=""
   ["src"]=""
+  ["scripts"]=""
 )
 for dir in "${!DIRECTORIES[@]}"; do
   if [ -d "$dir" ]; then

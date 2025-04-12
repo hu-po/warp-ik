@@ -10,7 +10,9 @@ RUN git clone https://github.com/hu-po/warp-ik.git
 WORKDIR /warp-ik
 ENV UV_LINK_MODE=copy
 ENV UV_PROJECT_ENVIRONMENT=/.venv
-COPY ./pyproject.toml /pyproject.toml
 RUN uv venv --python $PYTHON_VERSION $UV_PROJECT_ENVIRONMENT
+COPY ./pyproject.toml /warp-ik/pyproject.toml
 RUN uv pip install -e .
+COPY ./docker/requirements.${DOCKERFILE}.txt /warp-ik/requirements.${DOCKERFILE}.txt
+RUN uv pip install -r requirements.${DOCKERFILE}.txt
 RUN uv run python src/device_properties.py

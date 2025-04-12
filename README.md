@@ -4,23 +4,51 @@
 
 uses an llm (e.g. claude,gpt,xai,gemini) to rewrite and improve the code solution to a multi-robot parallel inverse kinematics problem. Iterative rounds to improve solutions, called `morphs`, which are run in docker containers and compete to get the highest score. A basic evolutionary algorithm with mutation and selection improves the morphs over time.
 
-one-liner
+setup
 
 ```bash
-git clone https://github.com/hu-po/warp-ik-evo.git && \
-cd warp-ik-evo && \
+git clone https://github.com/hu-po/warp-ik.git && \
+cd warp-ik && \
 uv venv && \
 source .venv/bin/activate && \
-uv pip install -e . && \
-uv run python /root/src/evolve.py --seed 42 --device 0
+uv pip install -e .
 ```
 
-## Usage
-
-run the morph `ik_6d` locally on `x86`:
+system information
 
 ```bash
-./scripts/test.sh x86 ik_6d
+./scripts/specs.sh
+uv run python src/device_properties.py
+```
+
+local test
+
+```bash
+uv run python src/test.py
+```
+
+docker test
+
+```bash
+./scripts/docker.test.sh x86
+```   
+
+use a morph recipe `ik_geojac,ik_mlp`, specify the compute backend `x86`:
+
+```bash
+./scripts/docker.run.sh x86 ik_geojac,ik_mlp
+```
+
+render out individual morph
+
+```bash
+uv run python morphs/ik_6d.py
+```
+
+run morph mutation (code generation only)
+
+```bash
+uv run python src/mutate.py --recipe "ik_6d"
 ```
 
 install python dependencies and run cloth sim creation
@@ -30,8 +58,8 @@ cd warp
 uv venv && source .venv/bin/activate
 uv pip install warp-lang[extras]
 # for arm agx orin cuda11
-uv pip install https://github.com/NVIDIA/warp/releases/download/v1.7.0/warp_lang-1.7.0+cu11-py3-none-manylinux2014_aarch64.whl
-uv run python cloth.py
+uv pip install 
+
 uv run python ik.py
 ```
 

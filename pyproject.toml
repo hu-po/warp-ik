@@ -3,9 +3,12 @@ name = "warp-ik-evo"
 version = "0.0.1"
 requires-python = ">=3.10"
 dependencies = [
-    "trimesh>=3.20.2",
     "warp-lang[extras]>=1.7.0",
     "wandb>=0.15.11",
+    "tenacity>=8.2.0",
+    "google-generativeai",
+    "openai",
+    "anthropic",
 ]
 
 [tool.uv]
