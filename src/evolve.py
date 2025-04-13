@@ -8,9 +8,17 @@ import time
 import uuid
 import yaml
 from typing import List
+from enum import Enum, auto
+import asyncio
 
 import nbformat
 from openai import OpenAI
+from ai import (
+    AI_MODEL_MAP,
+    ENABLED_MODELS,
+    AI_MAX_TOKENS,
+    log,
+)
 
 # set up directories
 ROOT_DIR = os.path.abspath(os.path.dirname(__file__))
@@ -23,9 +31,6 @@ os.makedirs(MORPH_DIR, exist_ok=True)
 # choose which mutations are active
 MUTATIONS: List[str] = [
     "open_ended",
-    "rewrite_model",
-    "rewrite_data",
-    "rewrite_training",
     "tune_config",
 ]
 
@@ -37,27 +42,20 @@ PROC_ARCDOC_PROMPT: float = 0.1
 # agent is used for mutations
 DEFAULT_AGENT = "gpt-4o"
 DEFAULT_MORPHS = ",".join([
-    "cnn.o1",
-    "mlp.o1",
-    "rnn.sonnet.o1",
-    "2eab46",
-    "3ec84c",
-    "6dd30c",
-    "7aa353",
-    "7117f0",
-    "6825e2",
+    "ik_3d",
+    "ik_6d",
 ])
 
-# morph states
-NOT_RUN_YET = 0
-ALREADY_RAN = -1
-ERRORED_OUT = -2
+class MorphState(Enum):
+    NOT_RUN_YET = auto()
+    ALREADY_RAN = auto()
+    ERRORED_OUT = auto()
 
 @dataclass(order=True)
 class Morph:
     score: float
     name: str
-    state: int = NOT_RUN_YET
+    state: MorphState = MorphState.NOT_RUN_YET
 
 # Argument parsing
 parser = argparse.ArgumentParser()
@@ -98,41 +96,64 @@ def load_prompt(prompt_path):
         return f.read()
 
 def morph_to_prompt(morph: Morph) -> str:
-    morph_nb_filepath = os.path.join(MORPH_DIR, f"{morph.name}.ipynb")
-    with open(morph_nb_filepath, "r", encoding="utf-8") as f:
-        notebook = nbformat.read(f, as_version=4)
-    return "\n".join(cell.source for cell in notebook.cells)
+    morph_filepath = os.path.join(MORPH_DIR, f"{morph.name}.py")
+    with open(morph_filepath, "r", encoding="utf-8") as f:
+        return f.read()
 
 def reply_to_morph(reply: str, name:str, output_dir: str) -> Morph:
     # remove leading ```python and trailing trailing ```
     reply = re.sub(r'^```python\s*', '', reply, flags=re.MULTILINE)
     reply = re.sub(r'^```\s*', '', reply, flags=re.MULTILINE)
-    nb = nbformat.v4.new_notebook()
-    nb.cells.append(nbformat.v4.new_code_cell(source=reply))
     morph = Morph(0, name)
-    nb_filepath = os.path.join(output_dir, f"{name}.ipynb")
-    with open(nb_filepath, "w", encoding="utf-8") as f:
-        nbformat.write(nb, f)
+    morph_filepath = os.path.join(output_dir, f"{name}.py")
+    with open(morph_filepath, "w", encoding="utf-8") as f:
+        f.write(reply)
     return morph
 
 def run_agent(system: str, prompt: str, agent: str = DEFAULT_AGENT):
-    print(f"\t🧠 calling {agent}...")
-    if agent in ["gpt-4o"]: # TODO
-        client = OpenAI()
-        completion = client.chat.completions.create(
-            model=agent,
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": prompt}
-            ]
-        )
-        reply = completion.choices[0].message.content
-    elif agent in ["sonnet3.5"]:
-        pass # TODO
-    else:
-        raise ValueError(f"Unknown agent: {agent}")
-    print("\t... completed")
-    return reply
+    print(f"\t🧠 calling enabled models: {ENABLED_MODELS}...")
+    
+    if not ENABLED_MODELS:
+        raise ValueError("No AI models are enabled")
+    
+    # Combine system and user prompts into a single context
+    full_prompt = f"SYSTEM:\n{system}\n\nUSER:\n{prompt}"
+    
+    # Create and run a temporary event loop for async calls
+    async def _run_models():
+        tasks = []
+        ai_models = []
+        
+        for model_name in ENABLED_MODELS:
+            tasks.append(AI_MODEL_MAP[model_name](full_prompt))
+            ai_models.append(model_name)
+            
+        responses = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        results = {}
+        for model_name, response in zip(ai_models, responses):
+            if isinstance(response, Exception):
+                print(f"\t❌ {model_name} failed: {str(response)}")
+                continue
+            results[model_name] = response
+            
+        if not results:
+            raise ValueError("All AI models failed to respond")
+            
+        return next(iter(results.values()))
+    
+    try:
+        # Run async code in a new event loop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        response = loop.run_until_complete(_run_models())
+        loop.close()
+        print("\t... completed")
+        return response
+        
+    except Exception as e:
+        print(f"\t❌ All models failed: {str(e)}")
+        raise
 
 def export(morph: Morph):
     export_prompt_filepath = os.path.join(PROMPT_DIR, "export.txt")
@@ -177,7 +198,7 @@ def mutate(protomorph: Morph, mutation_prompt_filename: str) -> Morph:
 if __name__ == "__main__":
     morphs: List[Morph] = []
     for protomorph in args.protomorphs.split(","):
-        if os.path.exists(os.path.join(MORPH_DIR, f"{protomorph}.ipynb")):
+        if os.path.exists(os.path.join(MORPH_DIR, f"{protomorph}.py")):
             morphs.append(Morph(0, protomorph))
     print("protomorphs:")
     for morph in morphs:
@@ -204,10 +225,10 @@ if __name__ == "__main__":
         leaderboard = {}
         leaderboard_filepath = os.path.join(leaderboard_dir, f"leaderboard.r{round_num}.yaml")
         for morph in morphs:
-            if morph.state == ALREADY_RAN:
+            if morph.state == MorphState.ALREADY_RAN:
                 print(f"\t⏩\tSkipping {morph.name} with score {morph.score}")
                 continue
-            elif morph.state == ERRORED_OUT:
+            elif morph.state == MorphState.ERRORED_OUT:
                 print(f"\t⏩\tSkipping {morph.name} with errors")
                 continue
             else:
@@ -222,7 +243,7 @@ if __name__ == "__main__":
                 proc.wait()
                 if proc.returncode != 0:
                     print(f"\t❌\tError when running {morph.name}")
-                    morph.state = ERRORED_OUT
+                    morph.state = MorphState.ERRORED_OUT
                     continue
                 morph_output_dir = os.path.join(OUTPUT_DIR, morph.name)
                 os.makedirs(morph_output_dir, exist_ok=True)
@@ -238,7 +259,7 @@ if __name__ == "__main__":
             leaderboard[morph.name] = score
             morph.score = score
             print(f"\t🏁\t{morph.name} scored {score}")
-            morph.state = ALREADY_RAN
+            morph.state = MorphState.ALREADY_RAN
             # export(morph)
         
         # write sorted leaderboard
