@@ -478,10 +478,11 @@ class Sim:
             self.renderer.end_frame()
             self.render_time += self.frame_dt
 
-def run_sim(config: SimConfig):
+def run_sim(config: SimConfig) -> dict:
     wp.init()
     log.info(f"gpu enabled: {wp.get_device().is_cuda}")
     log.info("starting simulation")
+    results = {}
     with wp.ScopedDevice(config.device):
         sim = Sim(config)
         log.debug("autodiff geometric jacobian:")
@@ -528,6 +529,7 @@ def run_sim(config: SimConfig):
 
     log.info(f"simulation complete!")
     log.info(f"performed {config.num_rollouts * config.train_iters} steps")
+    return results
 
 
 if __name__ == "__main__":
@@ -535,6 +537,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--device", type=str, default=None, help="Override default Warp device.")
     parser.add_argument("--headless", action='store_true', help="Run in headless mode.")
+    parser.add_argument("--track", action='store_true', help="Turn on tracking with wandb.")
     parser.add_argument("--seed", type=int, default=SimConfig.seed, help="Random seed.")
     parser.add_argument("--num_envs", type=int, default=SimConfig.num_envs, help="Number of environments to simulate.")
     parser.add_argument("--num_rollouts", type=int, default=SimConfig.num_rollouts, help="Number of rollouts to perform.")
@@ -543,6 +546,7 @@ if __name__ == "__main__":
     config = SimConfig(
         device=args.device,
         headless=args.headless,
+        track=args.track,
         seed=args.seed,
         num_envs=args.num_envs,
         num_rollouts=args.num_rollouts,
@@ -555,21 +559,22 @@ if __name__ == "__main__":
     config_filepath = os.path.join(output_dir, "config.json")
     with open(config_filepath, 'w') as f:
         json.dump(config.__dict__, f, indent=4)
-    import wandb
-    import uuid
-    # wandb.login()
-    wandb.init(
-        entity=config.wandb_entity,
-        project=config.wandb_project,
-        name=f"{config.device}.{config.morph}.{str(uuid.uuid4())[:6]}",
-        config=config.__dict__
-    )
-    wandb.save(config_filepath)
-    run_sim(config)
-    results = {"accuracy": best_valid_acc, "loss": best_valid_loss}
+    if config.track:
+        import wandb
+        import uuid
+        # wandb.login()
+        wandb.init(
+            entity=config.wandb_entity,
+            project=config.wandb_project,
+            name=f"{config.device}.{config.morph}.{str(uuid.uuid4())[:6]}",
+            config=config.__dict__
+        )
+        wandb.save(config_filepath)
+    results = run_sim(config)
     results_filepath = os.path.join(output_dir, "results.json")
     with open(results_filepath, 'w') as f:
         json.dump(results, f, indent=4)
-    wandb.save(submission_filepath)
-    wandb.save(results_filepath)
-    wandb.finish()
+    if config.track:
+        wandb.save(submission_filepath)
+        wandb.save(results_filepath)
+        wandb.finish()
