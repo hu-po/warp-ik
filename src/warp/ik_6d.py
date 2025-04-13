@@ -21,17 +21,13 @@ log.setLevel(logging.INFO)
 
 @dataclass
 class SimConfig:
-    device: str = os.environ.get("DEVICE", "oop") # device to run the simulation on
+    device: str = None # device to run the simulation on
     seed: int = 42 # random seed
     headless: bool = False # turns off rendering
     num_envs: int = 16 # number of parallel environments
     num_rollouts: int = 2 # number of rollouts to perform
     train_iters: int = 64 # number of training iterations per rollout
     start_time: float = 0.0 # start time for the simulation
-    morph: str = os.environ.get("MORPH", "test") # name of unique configuration used to identify the experiment
-    wandb_entity: str = os.environ.get("WANDB_ENTITY", "hug")
-    wandb_project: str = os.environ.get("WANDB_PROJECT", "warp-ik")
-    created_on: str = datetime.now().strftime("%Y%m%d%H%M%S")
     fps: int = 60 # frames per second
     step_size: float = 1.0 # step size in q space for updates
     urdf_path: str = "~/dev/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf" # path to the urdf file
@@ -536,28 +532,4 @@ if __name__ == "__main__":
         num_rollouts=args.num_rollouts,
         train_iters=args.train_iters,
     )
-    output_dir = f"/warp-ik/output/{config.morph}"
-    os.makedirs(output_dir, exist_ok=True)
-    print(f"output_dir: {output_dir}")
-    print(f"config:{json.dumps(config.__dict__, indent=4)}")
-    config_filepath = os.path.join(output_dir, "config.json")
-    with open(config_filepath, 'w') as f:
-        json.dump(config.__dict__, f, indent=4)
-    import wandb
-    import uuid
-    # wandb.login()
-    wandb.init(
-        entity=config.wandb_entity,
-        project=config.wandb_project,
-        name=f"{config.device}.{config.morph}.{str(uuid.uuid4())[:6]}",
-        config=config.__dict__
-    )
-    wandb.save(config_filepath)
     run_sim(config)
-    results = {"accuracy": best_valid_acc, "loss": best_valid_loss}
-    results_filepath = os.path.join(output_dir, "results.json")
-    with open(results_filepath, 'w') as f:
-        json.dump(results, f, indent=4)
-    wandb.save(submission_filepath)
-    wandb.save(results_filepath)
-    wandb.finish()

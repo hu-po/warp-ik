@@ -39,8 +39,6 @@ PROC_GLAZE_PROMPT: float = 0.5
 PROC_ARXIV_PROMPT: float = 0.8
 PROC_ARCDOC_PROMPT: float = 0.1
 
-# agent is used for mutations
-DEFAULT_AGENT = "gpt-4o"
 DEFAULT_MORPHS = ",".join([
     "ik_3d",
     "ik_6d",
