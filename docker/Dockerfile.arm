@@ -1,13 +1,19 @@
-#https://catalog.ngc.nvidia.com/containers?filters=&orderBy=scoreDESC&query=jetson
-FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
+# #https://catalog.ngc.nvidia.com/containers?filters=&orderBy=scoreDESC&query=jetson
+# FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
+# https://catalog.ngc.nvidia.com/orgs/nvidia/containers/l4t-cuda
+FROM nvcr.io/nvidia/l4t-cuda:12.2.2-devel-arm64-ubuntu22.04
 ENV DOCKERFILE="arm"
 ENV MORPH="ik_6d"
 ENV PYTHON_VERSION=3.10
-# RUN apt-get update && \
-#     apt-get install -y \
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
 RUN mkdir -p /warp-ik/src
 RUN mkdir -p /warp-ik/data
 RUN mkdir -p /warp-ik/output
+RUN mkdir -p /warp-ik/assets
+RUN git clone https://github.com/TrossenRobotics/trossen_arm_description.git /warp-ik/assets/trossen_arm_description
 RUN mkdir /warp-ik/.venv
 COPY ./src /warp-ik/src
 COPY ./pyproject.toml /warp-ik/pyproject.toml

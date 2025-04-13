@@ -1,20 +1,25 @@
-#https://catalog.ngc.nvidia.com/orgs/nvidia/teams/omniverse/containers/ov-base-ubuntu-22
-FROM nvcr.io/nvidia/omniverse/ov-base-ubuntu-22:2025.2.0
+# #https://catalog.ngc.nvidia.com/orgs/nvidia/teams/omniverse/containers/ov-base-ubuntu-22
+# FROM nvcr.io/nvidia/omniverse/ov-base-ubuntu-22:2025.2.0
+# https://catalog.ngc.nvidia.com/orgs/nvidia/containers/l4t-cuda
+FROM nvcr.io/nvidia/l4t-cuda:12.2.12-runtime
 ENV ACCEPT_EULA="Y"
 ENV PYTHON_VERSION=3.11
 ENV DOCKERFILE="x86"
 ENV ROOT_DIR="/home/ubuntu/warp-ik"
 ENV MORPH="ik_6d"
 COPY --from=ghcr.io/astral-sh/uv:0.5.1 /uv /uvx /bin/
-# RUN apt-get update && \
-#     apt-get install -y \
-WORKDIR /home/ubuntu
-RUN mkdir -p /home/ubuntu/warp-ik/src \
-    && mkdir -p /home/ubuntu/warp-ik/data \
-    && mkdir -p /home/ubuntu/warp-ik/output \
-    && mkdir -p /home/ubuntu/warp-ik/.venv \
-    && chown -R ubuntu:ubuntu /home/ubuntu/warp-ik
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+RUN mkdir -p /home/ubuntu/warp-ik/src
+RUN mkdir -p /home/ubuntu/warp-ik/data
+RUN mkdir -p /home/ubuntu/warp-ik/output
+RUN mkdir -p /home/ubuntu/warp-ik/assets
+RUN mkdir -p /home/ubuntu/warp-ik/.venv
+RUN chown -R ubuntu:ubuntu /home/ubuntu/warp-ik
 COPY --chown=ubuntu:ubuntu src/ /home/ubuntu/warp-ik/src/
+RUN git clone https://github.com/TrossenRobotics/trossen_arm_description.git /home/ubuntu/warp-ik/assets/trossen_arm_description
 WORKDIR /home/ubuntu/warp-ik
 ENV UV_PROJECT_ENVIRONMENT=/home/ubuntu/warp-ik/.venv
 RUN uv venv --python $PYTHON_VERSION $UV_PROJECT_ENVIRONMENT
