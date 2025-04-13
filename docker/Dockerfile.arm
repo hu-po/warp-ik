@@ -6,6 +6,9 @@ ENV PYTHON_VERSION=3.10
 # RUN apt-get update && \
 #     apt-get install -y \
 RUN mkdir -p /warp-ik/src
+RUN mkdir -p /warp-ik/data
+RUN mkdir -p /warp-ik/output
+RUN mkdir /warp-ik/.venv
 COPY ./src /warp-ik/src
 COPY ./pyproject.toml /warp-ik/pyproject.toml
 COPY --from=ghcr.io/astral-sh/uv:0.5.1 /uv /uvx /bin/
@@ -16,4 +19,5 @@ RUN uv venv --python $PYTHON_VERSION $UV_PROJECT_ENVIRONMENT
 RUN uv pip install -e .
 COPY ./docker/requirements.${DOCKERFILE}.txt /warp-ik/requirements.${DOCKERFILE}.txt
 RUN uv pip install -r requirements.${DOCKERFILE}.txt
-RUN uv run python src/device_properties.py
+RUN uv run python /warp-ik/src/device_properties.py
+RUN uv run python /warp-ik/src/test.py

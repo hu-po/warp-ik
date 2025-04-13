@@ -3,18 +3,26 @@ FROM nvcr.io/nvidia/omniverse/ov-base-ubuntu-22:2025.2.0
 ENV ACCEPT_EULA="Y"
 ENV PYTHON_VERSION=3.11
 ENV DOCKERFILE="x86"
+ENV ROOT_DIR="/home/ubuntu/warp-ik"
 ENV MORPH="ik_6d"
 COPY --from=ghcr.io/astral-sh/uv:0.5.1 /uv /uvx /bin/
 # RUN apt-get update && \
 #     apt-get install -y \
 WORKDIR /home/ubuntu
-COPY . /home/ubuntu/warp-ik
+RUN mkdir -p /home/ubuntu/warp-ik/src \
+    && mkdir -p /home/ubuntu/warp-ik/data \
+    && mkdir -p /home/ubuntu/warp-ik/output \
+    && mkdir -p /home/ubuntu/warp-ik/.venv \
+    && chown -R ubuntu:ubuntu /home/ubuntu/warp-ik
+COPY --chown=ubuntu:ubuntu src/ /home/ubuntu/warp-ik/src/
 WORKDIR /home/ubuntu/warp-ik
 ENV UV_PROJECT_ENVIRONMENT=/home/ubuntu/warp-ik/.venv
 RUN uv venv --python $PYTHON_VERSION $UV_PROJECT_ENVIRONMENT
-COPY ./pyproject.toml /home/ubuntu/warp-ik/pyproject.toml
+COPY --chown=ubuntu:ubuntu pyproject.toml /home/ubuntu/warp-ik/pyproject.toml
+USER ubuntu
 RUN uv pip install -e .
-COPY ./docker/requirements.${DOCKERFILE}.txt /home/ubuntu/warp-ik/requirements.${DOCKERFILE}.txt
-RUN uv pip install -r requirements.${DOCKERFILE}.txt
-RUN uv run python src/device_properties.py
-RUN uv run python src/test.py
+USER root
+COPY --chown=ubuntu:ubuntu docker/requirements.$DOCKERFILE.txt /home/ubuntu/warp-ik/requirements.$DOCKERFILE.txt
+RUN uv pip install -r requirements.$DOCKERFILE.txt
+RUN uv run python /home/ubuntu/warp-ik/src/device_properties.py
+RUN uv run python /home/ubuntu/warp-ik/src/test.py
