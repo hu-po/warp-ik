@@ -39,6 +39,15 @@ GEMINI_MODEL: str = "gemini-1.5-flash"
 # https://docs.x.ai/docs/overview#featured-models
 XAI_MODEL: str = "grok-2-vision-1212"
 
+# https://docs.anthropic.com/en/docs/about-claude/models/all-models
+CLAUDE_MODEL: str = "claude-3-7-sonnet-20250219"
+# https://platform.openai.com/docs/models
+GPT_MODEL: str = "o3-mini-2025-01-31"
+# https://ai.google.dev/gemini-api/docs/models
+GEMINI_MODEL: str = "gemini-2.5-pro-preview-03-25"
+# https://docs.x.ai/docs/models
+XAI_MODEL: str = "grok-3"
+
 PROMPT_DEFAULT: str = "describe this image in as much detail as possible"
 
 DESIRED_MODELS: List[str] = ["claude", "gpt", "gemini", "xapi"]

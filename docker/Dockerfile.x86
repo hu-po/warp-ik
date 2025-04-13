@@ -1,19 +1,20 @@
 #https://catalog.ngc.nvidia.com/orgs/nvidia/teams/omniverse/containers/ov-base-ubuntu-22
 FROM nvcr.io/nvidia/omniverse/ov-base-ubuntu-22:2025.2.0
+ENV ACCEPT_EULA="Y"
 ENV PYTHON_VERSION=3.11
 ENV DOCKERFILE="x86"
 ENV MORPH="ik_6d"
 COPY --from=ghcr.io/astral-sh/uv:0.5.1 /uv /uvx /bin/
 # RUN apt-get update && \
 #     apt-get install -y \
-WORKDIR /
-RUN git clone https://github.com/hu-po/warp-ik.git
-WORKDIR /warp-ik
-ENV UV_LINK_MODE=copy
-ENV UV_PROJECT_ENVIRONMENT=/.venv
+WORKDIR /home/ubuntu
+COPY . /home/ubuntu/warp-ik
+WORKDIR /home/ubuntu/warp-ik
+ENV UV_PROJECT_ENVIRONMENT=/home/ubuntu/warp-ik/.venv
 RUN uv venv --python $PYTHON_VERSION $UV_PROJECT_ENVIRONMENT
-COPY ./pyproject.toml /warp-ik/pyproject.toml
+COPY ./pyproject.toml /home/ubuntu/warp-ik/pyproject.toml
 RUN uv pip install -e .
-COPY ./docker/requirements.${DOCKERFILE}.txt /warp-ik/requirements.${DOCKERFILE}.txt
+COPY ./docker/requirements.${DOCKERFILE}.txt /home/ubuntu/warp-ik/requirements.${DOCKERFILE}.txt
 RUN uv pip install -r requirements.${DOCKERFILE}.txt
 RUN uv run python src/device_properties.py
+RUN uv run python src/test.py

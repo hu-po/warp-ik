@@ -1,2 +1,9 @@
 data/
+output/
 .venv
+.git
+.gitignore
+.dockerignore
+.github
+.vscode
+.env

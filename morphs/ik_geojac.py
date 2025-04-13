@@ -21,7 +21,8 @@ log.setLevel(logging.INFO)
 
 @dataclass
 class SimConfig:
-    device: str = os.environ.get("DEVICE", "oop") # device to run the simulation on
+    device: str = None # nvidia device to run the simulation on
+    dockerfile: str = os.environ.get("DOCKERFILE", "x86") # dockerfile variant
     seed: int = 42 # random seed
     headless: bool = False # turns off rendering
     num_envs: int = 16 # number of parallel environments
@@ -535,7 +536,8 @@ def run_sim(config: SimConfig) -> dict:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", type=str, default=None, help="Override default Warp device.")
+    parser.add_argument("--device", type=str, default=SimConfig.device, help="Override default Warp device.")
+    parser.add_argument("--dockerfile", type=str, default=SimConfig.dockerfile, help="Override default dockerfile variant.")
     parser.add_argument("--headless", action='store_true', help="Run in headless mode.")
     parser.add_argument("--track", action='store_true', help="Turn on tracking with wandb.")
     parser.add_argument("--seed", type=int, default=SimConfig.seed, help="Random seed.")
@@ -545,6 +547,7 @@ if __name__ == "__main__":
     args = parser.parse_known_args()[0]
     config = SimConfig(
         device=args.device,
+        dockerfile=args.dockerfile,
         headless=args.headless,
         track=args.track,
         seed=args.seed,
