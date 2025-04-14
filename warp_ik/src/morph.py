@@ -25,7 +25,7 @@ log.setLevel(logging.INFO)
 
 @dataclass
 class MorphConfig:
-    morph: str = 'blank' # unique identifier for the morph (when testing use "blank" morph)
+    morph: str = 'template' # unique identifier for the morph (when testing use "blank" morph)
     dockerfile: str = os.environ.get("DOCKERFILE") # dockerfile variant
     root_dir: str = os.environ.get("WARP_IK_ROOT") # root directory of the warp-ik project
     assets_dir: str = f"{root_dir}/assets" # assets directory for the morphs
