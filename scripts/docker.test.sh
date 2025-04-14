@@ -1,5 +1,5 @@
 #!/bin/bash
-ROOT_DIR="$(dirname "$0")"
+ROOT_DIR="$(dirname "$(dirname "$0")")" # the warp-ik directory
 DOCKERFILE=$1
 docker build -f docker/Dockerfile.$DOCKERFILE -t warp-ik-$DOCKERFILE .
 GPU_FLAG=""

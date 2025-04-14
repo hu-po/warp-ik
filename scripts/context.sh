@@ -1,5 +1,5 @@
 #!/bin/bash
-ROOT_DIR="$(dirname "$0")"
+ROOT_DIR="$(dirname "$(dirname "$0")")" # the warp-ik directory
 OUTPUT_FILE="$ROOT_DIR/output/context.txt"
 if [ -f "$OUTPUT_FILE" ]; then
   rm -f "$OUTPUT_FILE"

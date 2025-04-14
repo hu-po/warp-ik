@@ -1,6 +1,7 @@
 #!/bin/bash
+ROOT_DIR="$(dirname "$(dirname "$0")")" # the warp-ik directory
 HOSTNAME=$(hostname)
-OUTPUT_FILE="/tmp/specs.txt"
+OUTPUT_FILE="$ROOT_DIR/output/specs.md"
 echo "# Specs for \`$HOSTNAME\`" > "$OUTPUT_FILE"
 echo "Generated on $(date)" >> "$OUTPUT_FILE"
 echo "" >> "$OUTPUT_FILE"
