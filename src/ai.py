@@ -33,9 +33,7 @@ class AIConfig:
     timeout_model_api: int = 30  # seconds
     api_max_retries: int = 3
     max_tokens: int = 4096
-    # Model configurations
-    enabled_models: Set[str] = field(default_factory=lambda: {"gpt"})  # One of: "claude", "gpt", "gemini", "xapi"
-    model_name: str = "gpt"  # Default model to use
+    enabled_models: Set[str] = {"gpt", "claude", "gemini", "xapi"}
     # https://docs.anthropic.com/en/docs/about-claude/models/all-models
     claude_model: str = "claude-3-7-sonnet-20250219"
     # https://platform.openai.com/docs/models

@@ -1,7 +1,5 @@
-# #https://catalog.ngc.nvidia.com/containers?filters=&orderBy=scoreDESC&query=jetson
-# FROM nvcr.io/nvidia/l4t-jetpack:r36.4.0
-# https://catalog.ngc.nvidia.com/orgs/nvidia/containers/l4t-cuda
-FROM nvcr.io/nvidia/l4t-cuda:12.2.2-devel-arm64-ubuntu22.04
+# https://catalog.ngc.nvidia.com/orgs/nvidia/containers/cuda/tags
+FROM nvcr.io/nvidia/cuda:12.8.1-devel-ubuntu22.04@sha256:068e9c6a072aba2a5f07618f620ceb8cd1412d6d9e53b46191ab5c797997f46a
 
 # Set environment variables
 ENV ACCEPT_EULA="Y"
