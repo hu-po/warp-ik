@@ -8,19 +8,19 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     git \
     && rm -rf /var/lib/apt/lists/*
-RUN mkdir -p $WARP_IK_ROOT/src \
+WORKDIR $WARP_IK_ROOT
+RUN mkdir -p $WARP_IK_ROOT/warp_ik/morphs \
+    $WARP_IK_ROOT/warp_ik/src \
     $WARP_IK_ROOT/data \
     $WARP_IK_ROOT/output \
-    $WARP_IK_ROOT/morphs \
     $WARP_IK_ROOT/assets \
     $WARP_IK_ROOT/.venv
 RUN git clone https://github.com/TrossenRobotics/trossen_arm_description.git $WARP_IK_ROOT/assets/trossen_arm_description
-COPY src/ $WARP_IK_ROOT/src/
-COPY scripts/specs.sh $WARP_IK_ROOT/scripts/specs.sh
-COPY .env $WARP_IK_ROOT/.env
-WORKDIR $WARP_IK_ROOT
 RUN uv venv --python $PYTHON_VERSION $UV_PROJECT_ENVIRONMENT
-COPY pyproject.toml $WARP_IK_ROOT/pyproject.toml
-RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && uv pip install -e .[dev]
 COPY docker/requirements.$DOCKERFILE.txt $WARP_IK_ROOT/requirements.$DOCKERFILE.txt
 RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && uv pip install -r requirements.$DOCKERFILE.txt
+COPY pyproject.toml $WARP_IK_ROOT/pyproject.toml
+COPY warp_ik/ $WARP_IK_ROOT/warp_ik/
+RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && uv pip install -e .[dev]
+COPY scripts/specs.sh $WARP_IK_ROOT/scripts/specs.sh
+COPY .env $WARP_IK_ROOT/.env

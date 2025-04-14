@@ -475,9 +475,11 @@ def run_morph(config: MorphConfig) -> dict:
     log.info("starting simulation")
     results = {}
     morph_path = os.path.join(config.morph_dir, f"{config.morph}.py")
-    log.info(f"loading morph from {morph_path}")
-    sys.path.append(os.path.dirname(morph_path))
-    MorphClass = importlib.import_module(morph_path).Morph
+    log.info(f"loading morph {config.morph} from {morph_path}")
+    spec = importlib.util.spec_from_file_location(f"morphs.{config.morph}", morph_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    MorphClass = module.Morph
     with wp.ScopedDevice(config.device):
         morph = MorphClass(config)
         for i in range(config.num_rollouts):

@@ -1,11 +1,15 @@
 import warp as wp
 import numpy as np
 
-from warp_ik.src.morph import BaseMorph
+from src.morph import BaseMorph
 
 class Morph(BaseMorph):
 
     def _step(self):
+        """
+            Performs IK by computing the Finite Difference Jacobian of the end effector in 6D space
+            and solving for the joint angles that minimize the error.
+        """
         jacobians = np.zeros((self.num_envs, 6, self.dof), dtype=np.float32)
         q0 = self.model.joint_q.numpy().copy()
         for e in range(self.num_envs):

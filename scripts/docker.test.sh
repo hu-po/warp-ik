@@ -13,6 +13,6 @@ source /root/warp-ik/.env && \
 uv pip freeze && \
 bash /root/warp-ik/scripts/specs.sh && \
 if [[ \"$DOCKERFILE\" != \"x86-meerkat\" ]]; then
-    python /root/warp-ik/src/warp/device_properties.py
+    python /root/warp-ik/warp_ik/device_properties.py
 fi && \
-python /root/warp-ik/src/test.py"
+python /root/warp-ik/warp_ik/src/test.py"

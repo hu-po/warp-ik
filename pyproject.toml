@@ -1,8 +1,11 @@
 [project]
-name = "warp-ik"
+name = "warp_ik"
 version = "0.0.1"
 requires-python = ">=3.10"
 dependencies = []
+
+[tool.setuptools]
+packages = ["warp_ik"]
 
 [tool.uv]
 dev-dependencies = [

@@ -1,6 +1,6 @@
 import time
 
-from warp_ik.src.morph import BaseMorph
+from src.morph import BaseMorph
 
 class Morph(BaseMorph):
 
