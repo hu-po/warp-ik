@@ -9,4 +9,4 @@ docker run --gpus all -it --rm --user="root" \
 warp-ik-$DOCKERFILE bash -c "
 source /root/warp-ik/.venv/bin/activate && \
 source /root/warp-ik/.env && \
-uv run python /root/warp-ik/morphs/$MORPH.py"
+uv run python /root/warp-ik/morphs/$MORPH.py --dockerfile $DOCKERFILE --morph $MORPH"

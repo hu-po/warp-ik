@@ -23,14 +23,17 @@ log.setLevel(logging.INFO)
 
 @dataclass
 class SimConfig:
-    device: str = None # nvidia device to run the simulation on
-    dockerfile: str = os.environ.get("DOCKERFILE", "x86") # dockerfile variant
+    morph: str = 'test' # unique identifier for the morph
+    dockerfile: str = os.environ.get("DOCKERFILE") # dockerfile variant
+    root_dir: str = os.environ.get("WARP_IK_ROOT") # root directory of the warp-ik project
+    output_dir: str = f"{root_dir}/output" # output directory for the morphs
+    assets_dir: str = f"{root_dir}/assets" # assets directory for the morphs
     seed: int = 42 # random seed
+    device: str = None # nvidia device to run the simulation on
     headless: bool = False # turns off rendering
     num_envs: int = 16 # number of parallel environments
     num_rollouts: int = 2 # number of rollouts to perform
     train_iters: int = 64 # number of training iterations per rollout
-    morph: str = os.environ.get("MORPH", "test") # name of unique configuration used to identify the experiment
     track: bool = False # turns on tracking with wandb
     wandb_entity: str = os.environ.get("WANDB_ENTITY", "hug")
     wandb_project: str = os.environ.get("WANDB_PROJECT", "warp-ik")
@@ -38,8 +41,8 @@ class SimConfig:
     start_time: float = 0.0 # start time for the simulation
     fps: int = 60 # frames per second
     step_size: float = 1.0 # step size in q space for updates
-    urdf_path: str = f"{os.environ.get('WARP_IK_ROOT')}/assets/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf" # path to the urdf file
-    usd_output_path: str = f"{os.environ.get('WARP_IK_ROOT')}/output/ik_6d_output.usd" # path to the usd file to save the model
+    urdf_path: str = f"{assets_dir}/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf" # path to the urdf file
+    usd_output_path: str = f"{output_dir}/{morph}.usd" # path to the usd file to save the model
     ee_link_offset: tuple[float, float, float] = (0.0, 0.0, 0.0) # offset from the ee_gripper_link to the end effector
     gizmo_radius: float = 0.005 # radius of the gizmo (used for arrow base radius)
     gizmo_length: float = 0.05 # total length of the gizmo arrow
@@ -76,8 +79,6 @@ class SimConfig:
     joint_attach_kd: float = 20.0 # damping for the joint attach
 
 
-# -------------------------------------------------------------------
-# Helper: convert a quaternion (as numpy array [x,y,z,w]) to a 3x3 rotation matrix.
 def quat_to_rot_matrix_np(q):
     x, y, z, w = q
     return np.array([
@@ -89,14 +90,11 @@ def quat_to_rot_matrix_np(q):
 def quat_from_axis_angle_np(axis, angle):
     return np.concatenate([axis * np.sin(angle / 2), [np.cos(angle / 2)]])
 
-# Helper: apply a transformation to a point.
 def apply_transform_np(translation, quat, point):
     R = quat_to_rot_matrix_np(quat)
     return translation + R.dot(point)
 
-# Helper: multiply two quaternions (as numpy arrays [x,y,z,w]).
 def quat_mul_np(q1, q2):
-    """Multiply two quaternions q1*q2 (numpy arrays [x,y,z,w])."""
     x1, y1, z1, w1 = q1
     x2, y2, z2, w2 = q2
     return np.array([
@@ -106,8 +104,14 @@ def quat_mul_np(q1, q2):
         w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
     ], dtype=np.float32)
 
-# -------------------------------------------------------------------
-# Device helper functions for quaternion operations.
+def get_body_quaternions(state_body_q, num_links, ee_link_index):
+    num_envs = state_body_q.shape[0] // num_links
+    quats = np.empty((num_envs, 4), dtype=np.float32)
+    for e in range(num_envs):
+        t = state_body_q[e * num_links + ee_link_index]
+        quats[e, :] = t[3:7]
+    return quats
+
 @wp.func
 def quat_mul(q1: wp.quat, q2: wp.quat) -> wp.quat:
     return wp.quat(
@@ -121,8 +125,6 @@ def quat_mul(q1: wp.quat, q2: wp.quat) -> wp.quat:
 def quat_conjugate(q: wp.quat) -> wp.quat:
     return wp.quat(-q[0], -q[1], -q[2], q[3])
 
-# -------------------------------------------------------------------
-# Device function to compute an orientation error from two quaternions.
 @wp.func
 def quat_orientation_error(target: wp.quat, current: wp.quat) -> wp.vec3:
     q_err = quat_mul(target, quat_conjugate(current))
@@ -131,21 +133,8 @@ def quat_orientation_error(target: wp.quat, current: wp.quat) -> wp.vec3:
     qz = wp.select(q_err[3] < 0.0, -q_err[2], q_err[2])
     return wp.vec3(qx, qy, qz) * 2.0
 
-# -------------------------------------------------------------------
-# Host-side helper: extract quaternions from transforms.
-def get_body_quaternions(state_body_q, num_links, ee_link_index):
-    num_envs = state_body_q.shape[0] // num_links
-    quats = np.empty((num_envs, 4), dtype=np.float32)
-    for e in range(num_envs):
-        t = state_body_q[e * num_links + ee_link_index]
-        quats[e, :] = t[3:7]
-    return quats
-
 # <edit>
-# DO NOT MODIFY ABOVE THIS LINE
 
-# -------------------------------------------------------------------
-# Device kernel to compute a 6D error (position and orientation).
 @wp.kernel
 def compute_ee_error_kernel(
     body_q: wp.array(dtype=wp.transform),
@@ -337,7 +326,6 @@ class Sim:
             requires_grad=True,
         )
 
-# DO NOT MODIFY BELOW THIS LINE
 # </edit>
 
     def render_gizmos(self):
@@ -538,11 +526,12 @@ def run_sim(config: SimConfig) -> dict:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--device", type=str, default=SimConfig.device, help="Override default Warp device.")
     parser.add_argument("--dockerfile", type=str, default=SimConfig.dockerfile, help="Override default dockerfile variant.")
     parser.add_argument("--headless", action='store_true', help="Run in headless mode.")
     parser.add_argument("--track", action='store_true', help="Turn on tracking with wandb.")
+    parser.add_argument("--morph", type=str, default=SimConfig.morph, help="Unique identifier for the morph.")
     parser.add_argument("--seed", type=int, default=SimConfig.seed, help="Random seed.")
+    parser.add_argument("--device", type=str, default=SimConfig.device, help="Override default Warp device.")
     parser.add_argument("--num_envs", type=int, default=SimConfig.num_envs, help="Number of environments to simulate.")
     parser.add_argument("--num_rollouts", type=int, default=SimConfig.num_rollouts, help="Number of rollouts to perform.")
     parser.add_argument("--train_iters", type=int, default=SimConfig.train_iters, help="Training iterations per rollout.")
