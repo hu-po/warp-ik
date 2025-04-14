@@ -1,5 +1,5 @@
 warp-lang @ https://github.com/NVIDIA/warp/releases/download/v1.7.0/warp_lang-1.7.0+cu11-py3-none-manylinux2014_aarch64.whl
-cuda-core[cu11]
+cuda-core[cu11]==0.2.0
 trimesh==4.6.6
 wandb==0.19.9
 anthropic==0.49.0

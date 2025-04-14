@@ -193,7 +193,10 @@ def print_device_properties(properties):
     )
     print(f"- Multi-GPU board: {_yes_no(properties.multi_gpu_board)}")
     print(f"- Multi-GPU board group ID: {properties.multi_gpu_board_group_id}")
-    print(f"- Support for switch multicast and reduction operations: {_yes_no(properties.multicast_supported)}")
+    try:
+        print(f"- Support for switch multicast and reduction operations: {_yes_no(properties.multicast_supported)}")
+    except:
+        print(f"- Support for switch multicast and reduction operations: {_yes_no(False)}")
     print(f"- Number of multiprocessors: {properties.multiprocessor_count}")
     print(f"- NUMA configuration: {properties.numa_config}")
     print(f"- NUMA node ID of GPU memory: {properties.numa_id}")
