@@ -33,29 +33,34 @@ docker test, specify the compute backend `x86-3090`
 ./scripts/docker.test.sh x86-3090
 ```   
 
-run the `ik_geojac` morph:
+run the `template` morph:
 
 ```bash
-./scripts/docker.run.morph.sh x86-3090 ik_geojac
+./scripts/docker.run.morph.sh x86-3090 template
 ```
 
-start the evolutionary process using protomorphs `ik_geojac,ik_mlp`:
+start the evolutionary process using protomorphs `jacobian_geom_3d,jacobian_geom_6d`:
 
 ```bash
-./scripts/docker.run.evolve.sh x86-3090 ik_geojac,ik_mlp
+./scripts/docker.run.evolve.sh x86-3090 jacobian_geom_3d,jacobian_geom_6d
 ```
 
-
-create a mutation of a morph, check the output in `morphs/` folder:
+create a mutation of a morph, check the output in `warp_ik/morphs/` folder:
 
 ```bash
-./scripts/docker.run.mutate.sh x86-3090 ik_geojac
+./scripts/docker.run.mutate.sh x86-3090 jacobian_geom_3d
 ```
 
 clean out the output directory:
 
 ```bash
 ./scripts/clean.sh
+```
+
+create context file for asking about codebase to an llm:
+
+```bash
+./scripts/context.sh
 ```
 
 use usd viewer to view rendered outputs, requires USD installation [here](https://developer.nvidia.com/usd?sortBy=developer_learning_library%2Fsort%2Ffeatured_in.usd_resources%3Adesc%2Ctitle%3Aasc#section-getting-started)

@@ -10,7 +10,7 @@ fi
 declare -A DIRECTORIES=(
   # ----------------------------- ADD DIRECTORIES HERE
   ["docker"]=""
-  ["docs"]=""
+  # ["docs"]=""
   ["prompts"]=""
   ["scripts"]=""
   ["warp_ik/morphs"]=""
@@ -20,9 +20,9 @@ CODEBASE_NAME="warp-ik"
 declare -A FILES=(
   # ----------------------------- ADD FILES HERE
   ["README.md"]=""
-  [".env.example"]=""
-  ["pyproject.toml"]=""
-  [".dockerignore"]=""
+  # [".env.example"]=""
+  # ["pyproject.toml"]=""
+  # [".dockerignore"]=""
 )
 echo "Below is a list of files for the $CODEBASE_NAME codebase." >> "$OUTPUT_FILE"
 process_file() {
