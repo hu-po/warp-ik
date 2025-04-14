@@ -16,13 +16,13 @@ class TestImports(unittest.TestCase):
         except Exception as e:
             self.fail(f"Failed to import ai module: {str(e)}")
 
-    def test_evolve_module_import(self):
-        """Test that evolve.py can be imported without errors"""
+    def test_run_module_import(self):
+        """Test that run.py can be imported without errors"""
         try:
-            import evolve
-            log.info("Successfully imported evolve module")
+            import run
+            log.info("Successfully imported run module")
         except Exception as e:
-            self.fail(f"Failed to import evolve module: {str(e)}")
+            self.fail(f"Failed to import run module: {str(e)}")
 
 if __name__ == "__main__":
     unittest.main()

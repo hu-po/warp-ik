@@ -12,16 +12,8 @@ from enum import Enum, auto
 import asyncio
 import logging
 
-import nbformat
-from openai import OpenAI
-from ai import (
-    AI_MODEL_MAP,
-    ENABLED_MODELS,
-    AI_MAX_TOKENS,
-    log,
-)
+from ai import AI_MODEL_MAP, ENABLED_MODELS
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
