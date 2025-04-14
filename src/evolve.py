@@ -8,12 +8,11 @@ import time
 import uuid
 import yaml
 from typing import List
-from enum import Enum, auto
-import asyncio
 import logging
 
 from ai import inference
 from mutate import mutate
+from morph import ActiveMorph, MorphState
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,17 +21,6 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
-
-class MorphState(Enum):
-    NOT_RUN_YET = auto()
-    ALREADY_RAN = auto()
-    ERRORED_OUT = auto()
-
-@dataclass(order=True)
-class Morph:
-    score: float
-    name: str
-    state: MorphState = MorphState.NOT_RUN_YET
 
 @dataclass
 class EvolveConfig:
@@ -51,10 +39,10 @@ class EvolveConfig:
 def evolve(config: EvolveConfig):
     log.info(f"Seed: {config.seed}")
     random.seed(config.seed)
-    morphs: List[Morph] = []
+    morphs: List[ActiveMorph] = []
     for protomorph in config.protomorphs.split(","):
         if os.path.exists(os.path.join(config.morph_dir, f"{protomorph}.py")):
-            morphs.append(Morph(0, protomorph))
+            morphs.append(MorphState(0, protomorph))
     log.info("protomorphs:")
     for morph in morphs:
         log.info(f"\t🧬\t~{morph.name}~")

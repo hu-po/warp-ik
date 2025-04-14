@@ -30,6 +30,14 @@ class TestImports(unittest.TestCase):
             log.info("Successfully imported mutate module")
         except Exception as e:
             self.fail(f"Failed to import mutate module: {str(e)}")
+            
+    def test_morph_module_import(self):
+        """Test that morph.py can be imported without errors"""
+        try:
+            import morph
+            log.info("Successfully imported morph module")
+        except Exception as e:
+            self.fail(f"Failed to import morph module: {str(e)}")
 
 if __name__ == "__main__":
     unittest.main()

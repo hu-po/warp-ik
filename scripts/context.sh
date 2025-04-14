@@ -12,7 +12,12 @@ process_file() {
   cat "$file" >> "$OUTPUT_FILE"
   echo -e "\n--- END FILE: $file ---\n" >> "$OUTPUT_FILE"
 }
-for specific_file in "README.md" ".env.example" "pyproject.toml"; do
+for specific_file in \
+  "README.md" \
+  ".env.example" \
+  "pyproject.toml" \
+  ".dockerignore"
+do
   if [ -f "$specific_file" ]; then
     process_file "$specific_file"
   else
@@ -21,8 +26,11 @@ for specific_file in "README.md" ".env.example" "pyproject.toml"; do
 done
 declare -A DIRECTORIES=(
   ["docker"]=""
-  ["src"]=""
+  ["docs"]=""
+  ["morphs"]=""
+  ["prompts"]=""
   ["scripts"]=""
+  ["src"]=""
 )
 for dir in "${!DIRECTORIES[@]}"; do
   if [ -d "$dir" ]; then
