@@ -1,5 +1,6 @@
 data/
 output/
+docs/
 .venv
 .git
 .gitignore

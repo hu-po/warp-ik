@@ -32,7 +32,7 @@ class AIConfig:
     timeout_model_api: int = 30  # seconds
     api_max_retries: int = 3
     max_tokens: int = 4096
-    enabled_models: List[str] = field(default_factory=lambda: ["gpt", "claude", "gemini", "xapi"])
+    enabled_models: List[str] = field(default_factory=lambda: ["gpt", "claude", "gemini", "xapi", "replicate"])
     # https://docs.anthropic.com/en/docs/about-claude/models/all-models
     claude_model: str = "claude-3-7-sonnet-20250219"
     # https://platform.openai.com/docs/models
@@ -41,6 +41,8 @@ class AIConfig:
     gemini_model: str = "gemini-2.5-pro-preview-03-25"
     # https://docs.x.ai/docs/models
     xai_model: str = "grok-3"
+    # https://replicate.com/deepseek-ai/deepseek-r1
+    replicate_model: str = "deepseek-ai/deepseek-r1"
     prompt_default: str = "describe this image in as much detail as possible"
 
 config = AIConfig()
@@ -229,6 +231,38 @@ async def async_gemini(prompt: str, image_path: str = None) -> str:
         log.error(f"Gemini API error: {str(e)}")
         return f"Gemini API error: {str(e)}"
 
+@async_retry_decorator(timeout=config.timeout_model_api, max_retries=config.api_max_retries)
+async def async_replicate(prompt: str, image_path: str = None) -> str:
+    try:
+        import replicate
+        api_key = os.getenv("REPLICATE_API_TOKEN")
+        if not api_key:
+            raise ValueError("REPLICATE_API_TOKEN not set")
+        log.debug(f"\n---prompt - replicate\n {prompt}\n---\n")
+        image_input = None
+        if image_path:
+            with open(image_path, "rb") as image_file:
+                image_input = image_file
+                log.info(f"Loaded image for Replicate: {image_path}")
+        input_data = {"prompt": prompt}
+        if image_input:
+            input_data["image"] = image_input
+        response = await asyncio.to_thread(
+            replicate.run,
+            config.replicate_model,
+            input=input_data
+        )
+        # Convert response to string if it's a generator or list
+        if hasattr(response, '__iter__') and not isinstance(response, str):
+            response = "".join(response)   
+        log.info("Replicate API responded")
+        log.debug(f"\n---reply - replicate\n {response}\n---\n")
+        return response
+    except Exception as e:
+        log.error(f"Replicate API error: {str(e)}")
+        return f"Replicate API error: {str(e)}"
+
+
 AI_MODEL_MAP: Dict[str, Callable[[str, Optional[str]], Awaitable[str]]] = {}
 if "claude" in config.enabled_models:
     AI_MODEL_MAP["claude"] = async_claude
@@ -238,6 +272,8 @@ if "gemini" in config.enabled_models:
     AI_MODEL_MAP["gemini"] = async_gemini
 if "xapi" in config.enabled_models:
     AI_MODEL_MAP["xapi"] = async_xapi
+if "replicate" in config.enabled_models:
+    AI_MODEL_MAP["replicate"] = async_replicate
 
 
 async def async_inference(

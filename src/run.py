@@ -41,7 +41,7 @@ class EvolveConfig:
     mutate_on_start: bool = False
 
     # Mutation settings
-    enabled_models: List[str] = field(default_factory=lambda: ["gpt", "claude", "gemini", "xapi"])
+    enabled_models: List[str] = field(default_factory=lambda: ["gpt", "claude", "gemini", "xapi", "replicate"])
     mutations: List[str] = field(default_factory=lambda: [
         "open_ended",
         "tune_config",

@@ -8,3 +8,4 @@ replicate
 aiofiles
 python-dotenv
 tenacity
+replicate==1.0.4

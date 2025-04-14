@@ -13,7 +13,6 @@ fi
 
 # Run the container with conditional GPU flag
 docker run $GPU_FLAG -it --rm --user="root" \
--v $ROOT_DIR/.env:/root/warp-ik/.env \
 -v $ROOT_DIR/output:/root/warp-ik/output \
 warp-ik-$DOCKERFILE bash -c "
 source /root/warp-ik/.venv/bin/activate && \

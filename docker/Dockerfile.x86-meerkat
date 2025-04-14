@@ -26,6 +26,9 @@ RUN git clone https://github.com/TrossenRobotics/trossen_arm_description.git $WA
 # Copy source code
 COPY src/ $WARP_IK_ROOT/src/
 
+# environment file stores secrets
+COPY .env $WARP_IK_ROOT/.env
+
 # Set working directory
 WORKDIR $WARP_IK_ROOT
 

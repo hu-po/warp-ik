@@ -4,7 +4,6 @@ DOCKERFILE=$1
 MORPH=$2
 docker build -f docker/Dockerfile.$DOCKERFILE -t warp-ik-$DOCKERFILE .
 docker run --gpus all -it --rm --user="root" \
--v $ROOT_DIR/.env:/root/warp-ik/.env \
 -v $ROOT_DIR/output:/root/warp-ik/output \
 warp-ik-$DOCKERFILE bash -c "
 source /root/warp-ik/.venv/bin/activate && \
