@@ -31,7 +31,7 @@ class AIConfig:
     timeout_analysis: int = 600  # seconds
     timeout_model_api: int = 30  # seconds
     api_max_retries: int = 3
-    max_tokens: int = 4096
+    max_tokens: int = 1e4
     enabled_models: List[str] = field(default_factory=lambda: ["gpt", "claude", "gemini", "xapi", "replicate"])
     # https://docs.anthropic.com/en/docs/about-claude/models/all-models
     claude_model: str = "claude-3-7-sonnet-20250219"
@@ -156,7 +156,7 @@ async def async_gpt(prompt: str, image_path: str = None) -> str:
         response = await asyncio.to_thread(
             client.chat.completions.create,
             model=config.gpt_model,
-            max_tokens=config.max_tokens,
+            max_completion_tokens=config.max_tokens,
             messages=messages,
         )
         response = response.choices[0].message.content
