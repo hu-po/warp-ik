@@ -63,7 +63,8 @@ use usd viewer to view rendered outputs, requires USD installation [here](https:
 ```bash
 sudo apt-get install libxkbcommon-x11-0 libxcb-xinerama0 libxcb-image0 libxcb-shape0 libxcb-render-util0 libxcb-icccm4 libxcb-keysyms1
 unzip ~/Downloads/usd.py310.linux-x86_64.usdview.release-0.25.02-ba8aaf1f.zip -d ~/dev/usd
-/home/oop/dev/usd/scripts/usdview_gui.sh /home/oop/dev/warp-ik/output/ik_geojac.usd
+alias usdview="~/dev/usd/scripts/usdview_gui.sh"
+usdview /home/oop/dev/warp-ik/output/template.usd
 ```
 
 Scroll in with mousewheel

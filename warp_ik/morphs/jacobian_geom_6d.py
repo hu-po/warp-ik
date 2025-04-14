@@ -5,6 +5,9 @@ from warp_ik.src.morph import BaseMorph
 
 class Morph(BaseMorph):
 
+    def _update_config(self):
+        self.config.config_extras = {}
+
     def _step(self):
         """
             Performs IK by computing the Geometric Jacobian of the end effector in 6D space

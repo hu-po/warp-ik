@@ -31,6 +31,7 @@ class MorphConfig:
     assets_dir: str = f"{root_dir}/assets" # assets directory for the morphs
     output_dir: str = f"{root_dir}/output" # output directory for the morphs
     morph_dir: str = f"{root_dir}/warp_ik/morphs" # directory for the morphs
+    morph_output_dir: str = f"{output_dir}/{morph}" # output directory for this unique morph
     seed: int = 42 # random seed
     device: str = None # nvidia device to run the simulation on
     headless: bool = False # turns off rendering
@@ -45,7 +46,7 @@ class MorphConfig:
     fps: int = 60 # frames per second
     step_size: float = 1.0 # step size in q space for updates
     urdf_path: str = f"{assets_dir}/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf" # path to the urdf file
-    usd_output_path: str = f"{output_dir}/{morph}.usd" # path to the usd file to save the model
+    usd_output_path: str = f"{output_dir}/{morph}-recording.usd" # path to the usd file to save the model
     ee_link_offset: tuple[float, float, float] = (0.0, 0.0, 0.0) # offset from the ee_gripper_link to the end effector
     gizmo_radius: float = 0.005 # radius of the gizmo (used for arrow base radius)
     gizmo_length: float = 0.05 # total length of the gizmo arrow
@@ -99,6 +100,7 @@ class MorphConfig:
         0.01,       # right finger joint noise range
         0.01        # left finger joint noise range
     ])
+    config_extras: dict = field(default_factory=dict) # additional morph-specific config values
     joint_q_requires_grad: bool = True # whether to require grad for the joint q
     body_q_requires_grad: bool = True # whether to require grad for the body q
     joint_attach_ke: float = 1600.0 # stiffness for the joint attach
@@ -200,33 +202,59 @@ def compute_ee_error_kernel(
 
 
 class BaseMorph:
+
+    def _update_config(self):
+        raise NotImplementedError("Morphs must implement their own update_config function")
+
     def __init__(self, config: MorphConfig):
-        log.debug(f"config: {config}")
+
         self.config = config
-        self.rng = np.random.default_rng(config.seed)
-        self.num_envs = config.num_envs
-        self.render_time = config.start_time
-        self.fps = config.fps
+        self._update_config()
+        log.debug(f"config:{json.dumps(self.config.__dict__, indent=4)}")
+        
+        self.config.morph_output_dir = os.path.join(self.config.output_dir, self.config.morph)
+        os.makedirs(config.morph_output_dir, exist_ok=True)
+        log.debug(f"morph specific output_dir: {config.morph_output_dir}")
+
+        config_filepath = os.path.join(config.morph_output_dir, "config.json")
+        with open(config_filepath, 'w') as f:
+            json.dump(self.config.__dict__, f, indent=4)
+
+        if self.config.track:
+            import wandb
+            wandb.login()
+            wandb.init(
+                entity=self.config.wandb_entity,
+                project=self.config.wandb_project,
+                name=f"{self.config.dockerfile}/{self.config.morph}/seed{self.config.seed}",
+                config=self.config.__dict__
+            )
+            wandb.save(config_filepath)
+
+        self.rng = np.random.default_rng(self.config.seed)
+        self.num_envs = self.config.num_envs
+        self.render_time = self.config.start_time
+        self.fps = self.config.fps
         self.frame_dt = 1.0 / self.fps
 
         # Parse URDF and build model.
         articulation_builder = wp.sim.ModelBuilder()
         wp.sim.parse_urdf(
-            os.path.expanduser(config.urdf_path),
+            os.path.expanduser(self.config.urdf_path),
             articulation_builder,
             xform=wp.transform_identity(),
             floating=False
         )
         builder = wp.sim.ModelBuilder()
-        self.step_size = config.step_size
+        self.step_size = self.config.step_size
         self.num_links = len(articulation_builder.joint_type)
         self.dof = len(articulation_builder.joint_q)
-        self.joint_limits = config.joint_limits
+        self.joint_limits = self.config.joint_limits
 
         log.info(f"Parsed URDF with {self.num_links} links and {self.dof} dof")
 
         # Locate ee_gripper link.
-        self.ee_link_offset = wp.vec3(config.ee_link_offset)
+        self.ee_link_offset = wp.vec3(self.config.ee_link_offset)
         self.ee_link_index = -1
         for i, joint in enumerate(articulation_builder.joint_name):
             if joint == "ee_gripper":
@@ -237,7 +265,7 @@ class BaseMorph:
 
         # Compute initial arm orientation.
         _initial_arm_orientation = None
-        for axis, angle in config.arm_rot_offset:
+        for axis, angle in self.config.arm_rot_offset:
             if _initial_arm_orientation is None:
                 _initial_arm_orientation = wp.quat_from_axis_angle(wp.vec3(axis), angle)
             else:
@@ -248,8 +276,8 @@ class BaseMorph:
         # --- Revised target origin computation ---
         # Instead of using a raw grid, we compute each arm's target relative to its base transform.
         self.target_origin = []
-        self.arm_spacing_xz = config.arm_spacing_xz
-        self.arm_height = config.arm_height
+        self.arm_spacing_xz = self.config.arm_spacing_xz
+        self.arm_height = self.config.arm_height
         self.num_rows = int(math.sqrt(self.num_envs))
         log.info(f"Spawning {self.num_envs} arms in a grid of {self.num_rows}x{self.num_rows}")
         for e in range(self.num_envs):
@@ -261,14 +289,14 @@ class BaseMorph:
             base_quat = np.array([self.initial_arm_orientation.x, self.initial_arm_orientation.y,
                                    self.initial_arm_orientation.z, self.initial_arm_orientation.w], dtype=np.float32)
             # Define the target offset in robot coordinates and transform to world
-            target_offset_local = np.array(config.target_offset, dtype=np.float32)
+            target_offset_local = np.array(self.config.target_offset, dtype=np.float32)
             target_world = apply_transform_np(base_translation, base_quat, target_offset_local)
             self.target_origin.append(target_world)
             builder.add_builder(articulation_builder, xform=wp.transform(wp.vec3(x, self.arm_height, z), self.initial_arm_orientation))
-            num_joints_in_arm = len(config.qpos_home)
+            num_joints_in_arm = len(self.config.qpos_home)
             for i in range(num_joints_in_arm):
-                value = config.qpos_home[i] + self.rng.uniform(-config.q_angle_shuffle[i], config.q_angle_shuffle[i])
-                builder.joint_q[-num_joints_in_arm + i] = np.clip(value, config.joint_limits[i][0], config.joint_limits[i][1])
+                value = self.config.qpos_home[i] + self.rng.uniform(-self.config.q_angle_shuffle[i], self.config.q_angle_shuffle[i])
+                builder.joint_q[-num_joints_in_arm + i] = np.clip(value, self.config.joint_limits[i][0], self.config.joint_limits[i][1])
         self.target_origin = np.array(self.target_origin)
         # Target orientation: default identity.
         self.target_ori = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32), (self.num_envs, 1))
@@ -277,13 +305,14 @@ class BaseMorph:
         # Finalize model.
         self.model = builder.finalize()
         self.model.ground = False
-        self.model.joint_q.requires_grad = config.joint_q_requires_grad
-        self.model.body_q.requires_grad = config.body_q_requires_grad
-        self.model.joint_attach_ke = config.joint_attach_ke
-        self.model.joint_attach_kd = config.joint_attach_kd
+        self.model.joint_q.requires_grad = self.config.joint_q_requires_grad
+        self.model.body_q.requires_grad = self.config.body_q_requires_grad
+        self.model.joint_attach_ke = self.config.joint_attach_ke
+        self.model.joint_attach_kd = self.config.joint_attach_kd
         self.integrator = wp.sim.SemiImplicitIntegrator()
-        if not config.headless:
-            self.renderer = wp.sim.render.SimRenderer(self.model, os.path.expanduser(config.usd_output_path))
+        if not self.config.headless:
+            self.usd_output_path = os.path.join(self.config.morph_output_dir, "recording.usd")
+            self.renderer = wp.sim.render.SimRenderer(self.model, os.path.expanduser(self.usd_output_path))
         else:
             self.renderer = None
 
@@ -470,18 +499,22 @@ class BaseMorph:
             self.render_time += self.frame_dt
 
 def run_morph(config: MorphConfig) -> dict:
-    wp.init()
-    log.info(f"gpu enabled: {wp.get_device().is_cuda}")
-    log.info("starting simulation")
-    results = {}
     morph_path = os.path.join(config.morph_dir, f"{config.morph}.py")
-    log.info(f"loading morph {config.morph} from {morph_path}")
+    log.info(f"running morph {config.morph} from {morph_path}")
     spec = importlib.util.spec_from_file_location(f"morphs.{config.morph}", morph_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     MorphClass = module.Morph
+    morph = MorphClass(config)
+    # copy the morph python file to output directory
+    morph_output_filepath = os.path.join(config.morph_output_dir, "morph.py")
+    with open(morph_output_filepath, 'w') as f:
+        f.write(module.__str__())
+    wp.init()
+    log.info(f"gpu enabled: {wp.get_device().is_cuda}")
+    log.info("starting simulation")
+    results = {}
     with wp.ScopedDevice(config.device):
-        morph = MorphClass(config)
         for i in range(config.num_rollouts):
             with wp.ScopedTimer("target_update", print=False, active=True, dict=morph.profiler):
                 morph.targets = morph.target_origin.copy()
@@ -520,9 +553,16 @@ def run_morph(config: MorphConfig) -> dict:
             avg_steps_second = 1000.0 * float(morph.num_envs) / avg_time if key != "target_update" else 1000.0 / avg_time
             log.info(f"  {key}: {avg_time:.3f} ms ({avg_steps_second:.2f} steps/s)")
 
+        # save results
+        results_filepath = os.path.join(config.morph_output_dir, "results.json")
+        with open(results_filepath, 'w') as f:
+            json.dump(results, f, indent=4)
+        if config.track:
+            wandb.save(results_filepath)
+            wandb.finish()
+
     log.info(f"simulation complete!")
     log.info(f"performed {config.num_rollouts * config.train_iters} steps")
-    return results
 
 
 if __name__ == "__main__":
@@ -539,6 +579,7 @@ if __name__ == "__main__":
     parser.add_argument("--train_iters", type=int, default=MorphConfig.train_iters, help="Training iterations per rollout.")
     args = parser.parse_known_args()[0]
     config = MorphConfig(
+        morph=args.morph,
         device=args.device,
         dockerfile=args.dockerfile,
         headless=args.headless,
@@ -548,29 +589,4 @@ if __name__ == "__main__":
         num_rollouts=args.num_rollouts,
         train_iters=args.train_iters,
     )
-    output_dir = f"/warp-ik/output/{config.morph}"
-    os.makedirs(output_dir, exist_ok=True)
-    print(f"output_dir: {output_dir}")
-    print(f"config:{json.dumps(config.__dict__, indent=4)}")
-    config_filepath = os.path.join(output_dir, "config.json")
-    with open(config_filepath, 'w') as f:
-        json.dump(config.__dict__, f, indent=4)
-    if config.track:
-        import wandb
-        import uuid
-        # wandb.login()
-        wandb.init(
-            entity=config.wandb_entity,
-            project=config.wandb_project,
-            name=f"{config.device}.{config.morph}.{str(uuid.uuid4())[:6]}",
-            config=config.__dict__
-        )
-        wandb.save(config_filepath)
-    results = run_morph(config)
-    results_filepath = os.path.join(output_dir, "results.json")
-    with open(results_filepath, 'w') as f:
-        json.dump(results, f, indent=4)
-    if config.track:
-        wandb.save(submission_filepath)
-        wandb.save(results_filepath)
-        wandb.finish()
+    run_morph(config)
