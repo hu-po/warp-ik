@@ -1,4 +1,5 @@
 warp-lang[extras]==1.7.0
+cuda-core[cu12]==0.2.0
 trimesh==4.6.6
 wandb==0.19.9
 anthropic==0.49.0

@@ -17,9 +17,5 @@ docker run $GPU_FLAG -it --rm --user="root" \
 warp-ik-$DOCKERFILE bash -c "
 source /root/warp-ik/.venv/bin/activate && \
 source /root/warp-ik/.env && \
-uv pip freeze && \
 python /root/warp-ik/src/test.py && \
-bash /root/warp-ik/scripts/specs.sh && \
-if [[ \"$DOCKERFILE\" != \"x86-meerkat\" ]]; then
-    python /root/warp-ik/src/warp/device_properties.py
-fi"
+python /root/warp-ik/src/ai.py --test"
