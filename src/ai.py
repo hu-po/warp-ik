@@ -5,9 +5,10 @@ import glob
 import json
 import logging
 import os
+from dataclasses import dataclass, field
 from datetime import datetime
 from functools import wraps
-from typing import Callable, Dict, List, Optional, Awaitable
+from typing import Callable, Dict, List, Optional, Awaitable, Set
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -25,69 +26,28 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-DATA_PATH: str = os.path.join(os.path.dirname(__file__), "data")
-log.info(f"Data path: {DATA_PATH}")
+@dataclass
+class AIConfig:
+    data_path: str = field(default_factory=lambda: os.path.join(os.path.dirname(__file__), "data"))
+    timeout_analysis: int = 600  # seconds
+    timeout_model_api: int = 30  # seconds
+    api_max_retries: int = 3
+    max_tokens: int = 4096
+    # Model configurations
+    enabled_models: Set[str] = field(default_factory=lambda: {"gpt"})  # One of: "claude", "gpt", "gemini", "xapi"
+    model_name: str = "gpt"  # Default model to use
+    # https://docs.anthropic.com/en/docs/about-claude/models/all-models
+    claude_model: str = "claude-3-7-sonnet-20250219"
+    # https://platform.openai.com/docs/models
+    gpt_model: str = "o3-mini-2025-01-31"
+    # https://ai.google.dev/gemini-api/docs/models
+    gemini_model: str = "gemini-2.5-pro-preview-03-25"
+    # https://docs.x.ai/docs/models
+    xai_model: str = "grok-3"
+    prompt_default: str = "describe this image in as much detail as possible"
 
-TIMEOUT_ANALYSIS: int = 600 # seconds
-TIMEOUT_MODEL_API: int = 30 # seconds
-AI_API_MAX_RETRIES: int = 3
-AI_MAX_TOKENS: int = 4096
-
-CLAUDE_MODEL: str = "claude-3-sonnet-20240229"
-GPT_MODEL: str = "gpt-4o-mini"
-GEMINI_MODEL: str = "gemini-1.5-flash"
-# https://docs.x.ai/docs/overview#featured-models
-XAI_MODEL: str = "grok-2-vision-1212"
-
-# https://docs.anthropic.com/en/docs/about-claude/models/all-models
-CLAUDE_MODEL: str = "claude-3-7-sonnet-20250219"
-# https://platform.openai.com/docs/models
-GPT_MODEL: str = "o3-mini-2025-01-31"
-# https://ai.google.dev/gemini-api/docs/models
-GEMINI_MODEL: str = "gemini-2.5-pro-preview-03-25"
-# https://docs.x.ai/docs/models
-XAI_MODEL: str = "grok-3"
-
-PROMPT_DEFAULT: str = "describe this image in as much detail as possible"
-
-DESIRED_MODELS: List[str] = ["claude", "gpt", "gemini", "xapi"]
-AVAILABLE_MODELS: List[str] = []
-
-try:
-    from anthropic import Anthropic
-    if os.getenv("ANTHROPIC_API_KEY"):
-        AVAILABLE_MODELS.append("claude")
-    else:
-        log.warning("ANTHROPIC_API_KEY not set - Claude service will be unavailable")
-except ImportError:
-    log.warning("Anthropic module not installed - Claude service will be unavailable")
-
-try:
-    from openai import OpenAI
-    if os.getenv("OPENAI_API_KEY"):
-        AVAILABLE_MODELS.append("gpt")
-    else:
-        log.warning("OPENAI_API_KEY not set - GPT service will be unavailable")
-    if os.getenv("XAI_API_KEY"): # xapi mirrors openai api
-        AVAILABLE_MODELS.append("xapi")
-    else:
-        log.warning("XAI_API_KEY not set - XAI service will be unavailable")
-except ImportError:
-    log.warning("OpenAI module not installed - GPT service will be unavailable")
-
-try:
-    import google.generativeai as genai
-    if os.getenv("GOOGLE_API_KEY"):
-        AVAILABLE_MODELS.append("gemini")
-    else:
-        log.warning("GOOGLE_API_KEY not set - Gemini service will be unavailable")
-except ImportError:
-    log.warning("Google-generativeai module not installed - Gemini service will be unavailable")
-
-ENABLED_MODELS: List[str] = [
-    model for model in DESIRED_MODELS if model in AVAILABLE_MODELS
-]
-log.info(f"Enabled models: {ENABLED_MODELS}")
+# Create global config instance
+config = AIConfig()
 
 def async_retry_decorator(*, timeout: int, max_retries: int):
     def decorator(func):
@@ -137,7 +97,7 @@ def encode_image(image_path: str) -> str:
 
 AI_MODEL_MAP: Dict[str, Callable[[str, Optional[str]], Awaitable[str]]] = {}
 
-@async_retry_decorator(timeout=TIMEOUT_MODEL_API, max_retries=AI_API_MAX_RETRIES)
+@async_retry_decorator(timeout=config.timeout_model_api, max_retries=config.api_max_retries)
 async def async_claude(prompt: str, image_path: str = None) -> str:
     try:
         from anthropic import Anthropic
@@ -164,8 +124,8 @@ async def async_claude(prompt: str, image_path: str = None) -> str:
 
         response = await asyncio.to_thread(
             client.messages.create,
-            model=CLAUDE_MODEL,
-            max_tokens=AI_MAX_TOKENS,
+            model=config.claude_model,
+            max_tokens=config.max_tokens,
             messages=messages,
         )
         response = response.content[0].text
@@ -176,7 +136,7 @@ async def async_claude(prompt: str, image_path: str = None) -> str:
         log.error(f"Claude API error: {str(e)}")
         return f"Claude API error: {str(e)}"
 
-@async_retry_decorator(timeout=TIMEOUT_MODEL_API, max_retries=AI_API_MAX_RETRIES)
+@async_retry_decorator(timeout=config.timeout_model_api, max_retries=config.api_max_retries)
 async def async_gpt(prompt: str, image_path: str = None) -> str:
     try:
         from openai import OpenAI
@@ -199,8 +159,8 @@ async def async_gpt(prompt: str, image_path: str = None) -> str:
 
         response = await asyncio.to_thread(
             client.chat.completions.create,
-            model=GPT_MODEL,
-            max_tokens=AI_MAX_TOKENS,
+            model=config.gpt_model,
+            max_tokens=config.max_tokens,
             messages=messages,
         )
         response = response.choices[0].message.content
@@ -211,7 +171,7 @@ async def async_gpt(prompt: str, image_path: str = None) -> str:
         log.error(f"GPT API error: {str(e)}")
         return f"GPT API error: {str(e)}"
 
-@async_retry_decorator(timeout=TIMEOUT_MODEL_API, max_retries=AI_API_MAX_RETRIES)
+@async_retry_decorator(timeout=config.timeout_model_api, max_retries=config.api_max_retries)
 async def async_xapi(prompt: str, image_path: str = None) -> str:
     try:
         from openai import OpenAI
@@ -234,8 +194,8 @@ async def async_xapi(prompt: str, image_path: str = None) -> str:
 
         response = await asyncio.to_thread(
             client.chat.completions.create,
-            model=GPT_MODEL,
-            max_tokens=AI_MAX_TOKENS,
+            model=config.xai_model,
+            max_tokens=config.max_tokens,
             messages=messages,
         )
         response = response.choices[0].message.content
@@ -246,7 +206,7 @@ async def async_xapi(prompt: str, image_path: str = None) -> str:
         log.error(f"XAI API error: {str(e)}")
         return f"XAI API error: {str(e)}"
 
-@async_retry_decorator(timeout=TIMEOUT_MODEL_API, max_retries=AI_API_MAX_RETRIES)
+@async_retry_decorator(timeout=config.timeout_model_api, max_retries=config.api_max_retries)
 async def async_gemini(prompt: str, image_path: str = None) -> str:
     try:
         import google.generativeai as genai
@@ -258,14 +218,14 @@ async def async_gemini(prompt: str, image_path: str = None) -> str:
         uploaded_file = genai.upload_file(image_path) if image_path else None
         log.info(f"Uploaded file to Gemini: {uploaded_file.uri if uploaded_file else 'None'}")
 
-        model = genai.GenerativeModel(model_name=GEMINI_MODEL)
+        model = genai.GenerativeModel(model_name=config.gemini_model)
         log.debug(f"\n---prompt - gemini\n {prompt}\n---\n")
         content = [uploaded_file, "\n\n", prompt] if uploaded_file else [prompt]
 
         response = await model.generate_content_async(
             content,
             request_options={"timeout": 600},
-            generation_config={"max_output_tokens": AI_MAX_TOKENS},
+            generation_config={"max_output_tokens": config.max_tokens},
         )
         response = response.text
         log.info("Gemini API responded")
@@ -275,23 +235,23 @@ async def async_gemini(prompt: str, image_path: str = None) -> str:
         log.error(f"Gemini API error: {str(e)}")
         return f"Gemini API error: {str(e)}"
 
-if "claude" in ENABLED_MODELS:
+if "claude" in config.enabled_models:
     AI_MODEL_MAP["claude"] = async_claude
-if "gpt" in ENABLED_MODELS:
+if "gpt" in config.enabled_models:
     AI_MODEL_MAP["gpt"] = async_gpt
-if "gemini" in ENABLED_MODELS:
+if "gemini" in config.enabled_models:
     AI_MODEL_MAP["gemini"] = async_gemini
-if "xapi" in ENABLED_MODELS:
+if "xapi" in config.enabled_models:
     AI_MODEL_MAP["xapi"] = async_xapi
 
 async def async_analysis(
     prompt: str,
     image_path: str,
-    timeout: int = TIMEOUT_ANALYSIS,
+    timeout: int = config.timeout_analysis,
 ) -> None:
     log.debug("Starting AI analysis")
     try:
-        if not ENABLED_MODELS:
+        if not config.enabled_models:
             log.error("No AI APIs enabled")
             raise ValueError("No AI APIs enabled")
 
@@ -302,7 +262,7 @@ async def async_analysis(
         tasks = []
         ai_models = []
 
-        for ai_model in ENABLED_MODELS:
+        for ai_model in config.enabled_models:
             tasks.append(AI_MODEL_MAP[ai_model](prompt, image_path))
             ai_models.append(ai_model)
 
@@ -332,7 +292,7 @@ async def async_analysis(
 
         # Get base filename from image path and add analysis suffix
         base_name = os.path.splitext(os.path.basename(image_path))[0]
-        json_path = os.path.join(DATA_PATH, f"{base_name}-analysis.json")
+        json_path = os.path.join(config.data_path, f"{base_name}-analysis.json")
         try:
             async with aiofiles.open(json_path, "w") as f:
                 await f.write(json.dumps(results, indent=2))
@@ -345,8 +305,8 @@ async def async_analysis(
         return {"error": f"AI analysis failed: {str(e)}"}
 
 async def async_test_model_apis() -> None:
-    log.info(f"Testing enabled models: {ENABLED_MODELS}")
-    for model_name in ENABLED_MODELS:
+    log.info(f"Testing enabled models: {config.enabled_models}")
+    for model_name in config.enabled_models:
         try:
             log.info(f"Testing {model_name}")
             prompt = "ur favorite emoji"
@@ -365,8 +325,8 @@ async def analyze_directory(data_dir: str, prompt: str) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run AI model tests or analyze images")
     parser.add_argument("--test", action="store_true", help="Run model API tests")
-    parser.add_argument("--prompt", type=str, default=PROMPT_DEFAULT, help="Prompt for image analysis")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
+    parser.add_argument("--prompt", type=str, default=config.prompt_default, help="Prompt for image analysis")
     args = parser.parse_args()
 
     if args.debug:
@@ -375,6 +335,6 @@ if __name__ == "__main__":
     async def main():
         if args.test:
             await async_test_model_apis()
-        await analyze_directory(DATA_PATH, args.prompt)
+        await analyze_directory(config.data_path, args.prompt)
 
     asyncio.run(main())
