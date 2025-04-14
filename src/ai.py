@@ -48,6 +48,7 @@ class AIConfig:
 
 # Create global config instance
 config = AIConfig()
+AI_MODEL_MAP: Dict[str, Callable[[str, Optional[str]], Awaitable[str]]] = {}
 
 def async_retry_decorator(*, timeout: int, max_retries: int):
     def decorator(func):
@@ -94,8 +95,6 @@ def encode_image(image_path: str) -> str:
             return base64.b64encode(image_file.read()).decode('utf-8')
     except Exception as e:
         raise ValueError(f"Failed to encode image: {str(e)}")
-
-AI_MODEL_MAP: Dict[str, Callable[[str, Optional[str]], Awaitable[str]]] = {}
 
 @async_retry_decorator(timeout=config.timeout_model_api, max_retries=config.api_max_retries)
 async def async_claude(prompt: str, image_path: str = None) -> str:

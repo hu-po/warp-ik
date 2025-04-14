@@ -6,7 +6,7 @@ FROM nvcr.io/nvidia/ai-workbench/python-cuda122:1.0.6
 # Set environment variables
 ENV ACCEPT_EULA="Y"
 ENV PYTHON_VERSION=3.11
-ENV DOCKERFILE="x86"
+ENV DOCKERFILE="x86-3090"
 ENV MORPH="ik_6d"
 ENV WARP_IK_ROOT=/root/warp-ik
 ENV UV_PROJECT_ENVIRONMENT=/root/warp-ik/.venv
@@ -47,7 +47,3 @@ RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && \
 # Set up environment for GPU access
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
-
-# Set up shell with virtual environment activated
-SHELL ["/bin/bash", "-c"]
-ENTRYPOINT ["/bin/bash", "-c", "source $UV_PROJECT_ENVIRONMENT/bin/activate && exec /bin/bash"]

@@ -6,7 +6,7 @@ FROM nvcr.io/nvidia/l4t-cuda:12.2.2-devel-arm64-ubuntu22.04
 # Set environment variables
 ENV ACCEPT_EULA="Y"
 ENV PYTHON_VERSION=3.10
-ENV DOCKERFILE="arm"
+ENV DOCKERFILE="arm-gh200"
 ENV MORPH="ik_6d"
 ENV WARP_IK_ROOT=/root/warp-ik
 ENV UV_PROJECT_ENVIRONMENT=/root/warp-ik/.venv
@@ -48,7 +48,3 @@ RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && \
 # Set up environment for GPU access
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
-
-# Set up shell with virtual environment activated
-SHELL ["/bin/bash", "-c"]
-ENTRYPOINT ["/bin/bash", "-c", "source $UV_PROJECT_ENVIRONMENT/bin/activate && exec /bin/bash"]

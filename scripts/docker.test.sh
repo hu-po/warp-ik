@@ -4,10 +4,8 @@ DOCKERFILE=$1
 docker build -f docker/Dockerfile.$DOCKERFILE -t warp-ik-$DOCKERFILE .
 docker run --gpus all -it --rm --user="root" \
 -v $ROOT_DIR/.env:/root/warp-ik/.env \
--v $ROOT_DIR/src:/root/warp-ik/src \
--v $ROOT_DIR/data:/root/warp-ik/data \
 -v $ROOT_DIR/output:/root/warp-ik/output \
-warp-ik-$DOCKERFILE bash -c "uv venv && source .venv/bin/activate && \
+warp-ik-$DOCKERFILE bash -c "
 uv run python /root/warp-ik/src/test.py && \
 uv run python /root/warp-ik/src/ai.py --test && \
-uv run python /root/warp-ik/src/device_properties.py"
+uv run python /root/warp-ik/src/warp/device_properties.py"
