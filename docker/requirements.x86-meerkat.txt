@@ -7,3 +7,4 @@ google-generativeai
 replicate
 aiofiles
 python-dotenv
+tenacity
