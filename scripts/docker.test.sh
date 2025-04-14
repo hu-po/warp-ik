@@ -1,8 +1,18 @@
 #!/bin/bash
 ROOT_DIR="$(dirname "$0")"
 DOCKERFILE=$1
+
+# Build the Docker image
 docker build -f docker/Dockerfile.$DOCKERFILE -t warp-ik-$DOCKERFILE .
-docker run --gpus all -it --rm --user="root" \
+
+# Set GPU flag based on dockerfile type
+GPU_FLAG=""
+if [[ "$DOCKERFILE" != "x86-meerkat" ]]; then
+    GPU_FLAG="--gpus all"
+fi
+
+# Run the container with conditional GPU flag
+docker run $GPU_FLAG -it --rm --user="root" \
 -v $ROOT_DIR/.env:/root/warp-ik/.env \
 -v $ROOT_DIR/output:/root/warp-ik/output \
 warp-ik-$DOCKERFILE bash -c "
