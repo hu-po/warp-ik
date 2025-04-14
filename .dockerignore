@@ -7,4 +7,3 @@ docs/
 .dockerignore
 .github
 .vscode
-.env
