@@ -198,8 +198,12 @@ def print_device_properties(properties):
     except:
         print(f"- Support for switch multicast and reduction operations: {_yes_no(False)}")
     print(f"- Number of multiprocessors: {properties.multiprocessor_count}")
-    print(f"- NUMA configuration: {properties.numa_config}")
-    print(f"- NUMA node ID of GPU memory: {properties.numa_id}")
+    try:
+        print(f"- NUMA configuration: {properties.numa_config}")
+        print(f"- NUMA node ID of GPU memory: {properties.numa_id}")
+    except:
+        print(f"- NUMA configuration: {None}")
+        print(f"- NUMA node ID of GPU memory: {None}")
     print(f"- Support for coherently accessing pageable memory: {_yes_no(properties.pageable_memory_access)}")
     print(
         "- Access pageable memory via host's page tables: "
