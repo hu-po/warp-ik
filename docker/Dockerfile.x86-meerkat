@@ -20,9 +20,11 @@ RUN apt-get update && \
 # Create directory structure
 RUN mkdir -p $WARP_IK_ROOT/{src,data,output,assets,.venv}
 
-# Copy source code and clone dependencies
-COPY src/ $WARP_IK_ROOT/src/
+# Clone dependencies
 RUN git clone https://github.com/TrossenRobotics/trossen_arm_description.git $WARP_IK_ROOT/assets/trossen_arm_description
+
+# Copy source code
+COPY src/ $WARP_IK_ROOT/src/
 
 # Set working directory
 WORKDIR $WARP_IK_ROOT

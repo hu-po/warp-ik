@@ -8,7 +8,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import wraps
-from typing import Callable, Dict, List, Optional, Awaitable, Set
+from typing import Callable, Dict, List, Optional, Awaitable
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -28,12 +28,11 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class AIConfig:
-    data_path: str = field(default_factory=lambda: os.path.join(os.path.dirname(__file__), "data"))
     timeout_analysis: int = 600  # seconds
     timeout_model_api: int = 30  # seconds
     api_max_retries: int = 3
     max_tokens: int = 4096
-    enabled_models: Set[str] = {"gpt", "claude", "gemini", "xapi"}
+    enabled_models: List[str] = field(default_factory=lambda: ["gpt", "claude", "gemini", "xapi"])
     # https://docs.anthropic.com/en/docs/about-claude/models/all-models
     claude_model: str = "claude-3-7-sonnet-20250219"
     # https://platform.openai.com/docs/models
@@ -44,9 +43,7 @@ class AIConfig:
     xai_model: str = "grok-3"
     prompt_default: str = "describe this image in as much detail as possible"
 
-# Create global config instance
 config = AIConfig()
-AI_MODEL_MAP: Dict[str, Callable[[str, Optional[str]], Awaitable[str]]] = {}
 
 def async_retry_decorator(*, timeout: int, max_retries: int):
     def decorator(func):
@@ -232,6 +229,7 @@ async def async_gemini(prompt: str, image_path: str = None) -> str:
         log.error(f"Gemini API error: {str(e)}")
         return f"Gemini API error: {str(e)}"
 
+AI_MODEL_MAP: Dict[str, Callable[[str, Optional[str]], Awaitable[str]]] = {}
 if "claude" in config.enabled_models:
     AI_MODEL_MAP["claude"] = async_claude
 if "gpt" in config.enabled_models:
@@ -241,11 +239,13 @@ if "gemini" in config.enabled_models:
 if "xapi" in config.enabled_models:
     AI_MODEL_MAP["xapi"] = async_xapi
 
-async def async_analysis(
+
+async def async_inference(
     prompt: str,
     image_path: str,
+    enabled_models: List[str] = config.enabled_models,
     timeout: int = config.timeout_analysis,
-) -> None:
+) -> Dict[str, str]:
     log.debug("Starting AI analysis")
     try:
         if not config.enabled_models:
@@ -259,7 +259,7 @@ async def async_analysis(
         tasks = []
         ai_models = []
 
-        for ai_model in config.enabled_models:
+        for ai_model in enabled_models:
             tasks.append(AI_MODEL_MAP[ai_model](prompt, image_path))
             ai_models.append(ai_model)
 
@@ -289,7 +289,8 @@ async def async_analysis(
 
         # Get base filename from image path and add analysis suffix
         base_name = os.path.splitext(os.path.basename(image_path))[0]
-        json_path = os.path.join(config.data_path, f"{base_name}-analysis.json")
+        directory = os.path.dirname(image_path)
+        json_path = os.path.join(directory, f"{base_name}-analysis.json")
         try:
             async with aiofiles.open(json_path, "w") as f:
                 await f.write(json.dumps(results, indent=2))
@@ -300,6 +301,11 @@ async def async_analysis(
     except Exception as e:
         log.error(f"AI analysis error: {str(e)}", exc_info=True)
         return {"error": f"AI analysis failed: {str(e)}"}
+
+    return results
+
+def inference(prompt: str, models: List[str] = config.enabled_models, image_path: str = None) -> Dict[str, str]:
+    return asyncio.run(async_inference(prompt, models, image_path))
 
 async def async_test_model_apis() -> None:
     log.info(f"Testing enabled models: {config.enabled_models}")
@@ -312,26 +318,17 @@ async def async_test_model_apis() -> None:
         except Exception as e:
             log.error(f"Error testing {model_name}: {str(e)}")
 
-async def analyze_directory(data_dir: str, prompt: str) -> None:
-    image_files = glob.glob(os.path.join(data_dir, "*.jpg")) + glob.glob(os.path.join(data_dir, "*.png"))
-    log.info(f"Found {len(image_files)} images in {data_dir}")
-    for image_path in image_files:
-        log.info(f"Analyzing {image_path}")
-        await async_analysis(prompt, image_path)
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run AI model tests or analyze images")
     parser.add_argument("--test", action="store_true", help="Run model API tests")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
-    parser.add_argument("--prompt", type=str, default=config.prompt_default, help="Prompt for image analysis")
     args = parser.parse_args()
 
     if args.debug:
         log.setLevel(logging.DEBUG)
 
-    async def main():
-        if args.test:
-            await async_test_model_apis()
-        await analyze_directory(config.data_path, args.prompt)
-
-    asyncio.run(main())
+    if args.test:
+        asyncio.run(async_test_model_apis())
+    else:
+        results = inference("write a short haiku about yourself")
+        log.info(results)

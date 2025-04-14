@@ -12,7 +12,7 @@ from enum import Enum, auto
 import asyncio
 import logging
 
-from ai import AI_MODEL_MAP, ENABLED_MODELS
+from ai import inference
 
 logging.basicConfig(
     level=logging.INFO,
@@ -33,7 +33,6 @@ class EvolveConfig:
 
     # Evolution parameters
     seed: int = 0
-    agent: str = "gpt-4"
     protomorphs: str = "ik_geojac"
     num_rounds: int = 12
     num_morphs: int = 12
@@ -42,6 +41,7 @@ class EvolveConfig:
     mutate_on_start: bool = False
 
     # Mutation settings
+    enabled_models: List[str] = field(default_factory=lambda: ["gpt", "claude", "gemini", "xapi"])
     mutations: List[str] = field(default_factory=lambda: [
         "open_ended",
         "tune_config",
@@ -88,51 +88,6 @@ def reply_to_morph(reply: str, name: str, output_dir: str) -> Morph:
         f.write(reply)
     return morph
 
-def run_agent(system: str, prompt: str, agent: str = "gpt-4"):
-    log.info(f"\t🧠 calling enabled models: {ENABLED_MODELS}...")
-    
-    if not ENABLED_MODELS:
-        raise ValueError("No AI models are enabled")
-    
-    # Combine system and user prompts into a single context
-    full_prompt = f"SYSTEM:\n{system}\n\nUSER:\n{prompt}"
-    
-    # Create and run a temporary event loop for async calls
-    async def _run_models():
-        tasks = []
-        ai_models = []
-        
-        for model_name in ENABLED_MODELS:
-            tasks.append(AI_MODEL_MAP[model_name](full_prompt))
-            ai_models.append(model_name)
-            
-        responses = await asyncio.gather(*tasks, return_exceptions=True)
-        
-        results = {}
-        for model_name, response in zip(ai_models, responses):
-            if isinstance(response, Exception):
-                log.error(f"\t❌ {model_name} failed: {str(response)}")
-                continue
-            results[model_name] = response
-            
-        if not results:
-            raise ValueError("All AI models failed to respond")
-            
-        return next(iter(results.values()))
-    
-    try:
-        # Run async code in a new event loop
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        response = loop.run_until_complete(_run_models())
-        loop.close()
-        log.info("\t... completed")
-        return response
-        
-    except Exception as e:
-        log.error(f"\t❌ All models failed: {str(e)}")
-        raise
-
 def mutate(config: EvolveConfig, protomorph: Morph, mutation_prompt_filename: str) -> Morph:
     log.info("🧫 mutating...")
     log.info(f"\t👵 ancestor ~{protomorph.name}~")
@@ -159,7 +114,7 @@ def mutate(config: EvolveConfig, protomorph: Morph, mutation_prompt_filename: st
     neomorph_prompt_filepath = os.path.join(neomorph_output_dir, "prompt.txt")
     with open(neomorph_prompt_filepath, "w") as f:
         f.write(f"SYSTEM:\n{system}\n\nPROMPT:\n{prompt}")
-    reply = run_agent(system, prompt, config.agent)
+    reply = inference(f"system:\n{system}\n\nprompt:\n{prompt}", models=config.enabled_models)
     neomorph = reply_to_morph(reply, neomorph_name, config.morph_dir)
     log.info(f"\t🥚 welcome ~{neomorph_name}~")
     return neomorph
