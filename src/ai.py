@@ -31,7 +31,7 @@ class AIConfig:
     timeout_analysis: int = 600  # seconds
     timeout_model_api: int = 30  # seconds
     api_max_retries: int = 3
-    max_tokens: int = 1e4
+    max_tokens: int = int(1e4)
     enabled_models: List[str] = field(default_factory=lambda: ["gpt", "claude", "gemini", "xapi", "replicate"])
     # https://docs.anthropic.com/en/docs/about-claude/models/all-models
     claude_model: str = "claude-3-7-sonnet-20250219"
