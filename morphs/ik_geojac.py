@@ -139,7 +139,7 @@ def get_body_quaternions(state_body_q, num_links, ee_link_index):
         quats[e, :] = t[3:7]
     return quats
 
-# <edit-zone>
+# <edit>
 # DO NOT MODIFY ABOVE THIS LINE
 
 # -------------------------------------------------------------------
@@ -336,7 +336,7 @@ class Sim:
         )
 
 # DO NOT MODIFY BELOW THIS LINE
-# </edit-zone>
+# </edit>
 
     def render_gizmos(self):
         if self.renderer is None:
