@@ -1,7 +1,4 @@
-# #https://catalog.ngc.nvidia.com/orgs/nvidia/teams/omniverse/containers/ov-base-ubuntu-22
-# FROM nvcr.io/nvidia/omniverse/ov-base-ubuntu-22:2025.2.0
-# https://catalog.ngc.nvidia.com/orgs/nvidia/teams/ai-workbench/containers/python-cuda122/tags
-FROM nvcr.io/nvidia/ai-workbench/python-cuda122:1.0.6
+FROM python:3.11-slim-jammy
 
 # Set environment variables
 ENV ACCEPT_EULA="Y"
@@ -47,7 +44,3 @@ RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && \
 # Print out python dependency versions
 RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && \
     uv pip freeze
-
-# Set up environment for GPU access
-ENV NVIDIA_VISIBLE_DEVICES=all
-ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
