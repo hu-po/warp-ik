@@ -1,0 +1,9 @@
+trimesh>=3.20.2
+warp-lang @ https://github.com/NVIDIA/warp/releases/download/v1.7.0/warp_lang-1.7.0+cu11-py3-none-manylinux2014_aarch64.whl
+wandb
+anthropic
+openai
+google-generativeai
+replicate
+aiofiles
+python-dotenv

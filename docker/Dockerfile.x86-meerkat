@@ -1,0 +1,53 @@
+# #https://catalog.ngc.nvidia.com/orgs/nvidia/teams/omniverse/containers/ov-base-ubuntu-22
+# FROM nvcr.io/nvidia/omniverse/ov-base-ubuntu-22:2025.2.0
+# https://catalog.ngc.nvidia.com/orgs/nvidia/teams/ai-workbench/containers/python-cuda122/tags
+FROM nvcr.io/nvidia/ai-workbench/python-cuda122:1.0.6
+
+# Set environment variables
+ENV ACCEPT_EULA="Y"
+ENV PYTHON_VERSION=3.11
+ENV DOCKERFILE="x86"
+ENV MORPH="ik_6d"
+ENV WARP_IK_ROOT=/root/warp-ik
+ENV UV_PROJECT_ENVIRONMENT=/root/warp-ik/.venv
+
+# Install UV package manager
+COPY --from=ghcr.io/astral-sh/uv:0.5.1 /uv /uvx /bin/
+
+# Install system dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create directory structure
+RUN mkdir -p $WARP_IK_ROOT/{src,data,output,assets,.venv}
+
+# Copy source code and clone dependencies
+COPY src/ $WARP_IK_ROOT/src/
+RUN git clone https://github.com/TrossenRobotics/trossen_arm_description.git $WARP_IK_ROOT/assets/trossen_arm_description
+
+# Set working directory
+WORKDIR $WARP_IK_ROOT
+
+# Create and activate Python virtual environment
+RUN uv venv --python $PYTHON_VERSION $UV_PROJECT_ENVIRONMENT
+
+# Install package and dependencies
+COPY pyproject.toml $WARP_IK_ROOT/pyproject.toml
+RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && \
+    uv pip install -e . && \
+    uv pip install pytest>=8.3.4
+
+# Install additional requirements
+COPY docker/requirements.$DOCKERFILE.txt $WARP_IK_ROOT/requirements.$DOCKERFILE.txt
+RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && \
+    uv pip install -r requirements.$DOCKERFILE.txt
+
+# Set up environment for GPU access
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+
+# Set up shell with virtual environment activated
+SHELL ["/bin/bash", "-c"]
+ENTRYPOINT ["/bin/bash", "-c", "source $UV_PROJECT_ENVIRONMENT/bin/activate && exec /bin/bash"]

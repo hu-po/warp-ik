@@ -36,7 +36,6 @@ MUTATIONS: List[str] = [
 
 # mutation prompt modifiers (proc chance in 0 to 1)
 PROC_GLAZE_PROMPT: float = 0.5
-PROC_ARXIV_PROMPT: float = 0.8
 PROC_ARCDOC_PROMPT: float = 0.1
 
 DEFAULT_MORPHS = ",".join([
@@ -70,23 +69,6 @@ args = parser.parse_args()
 # Setup and seeding
 print(f"Seed: {args.seed}")
 random.seed(args.seed)
-
-def random_arxiv_abstract(num_terms: int = 2) -> str:
-    import arxiv
-    query_filepath = os.path.join(PROMPT_DIR, "arxiv_query.txt")
-    with open(query_filepath, "r") as f:
-        terms = f.read().strip().split(',')
-    query = " AND ".join(random.sample(terms, num_terms))
-    try:
-        search_results = arxiv.Search(
-            query=query,
-            max_results=12,  # Adjust the number if necessary
-            sort_by=arxiv.SortCriterion.SubmittedDate
-        )
-        paper = random.choice(list(search_results.results()))
-        return f"This paper from arxiv contains a helpful hint:\n\n{paper.title}\n\n{paper.summary}"
-    except Exception:
-        return "The Bitter Lesson"
 
 def load_prompt(prompt_path):
     prompt_filepath = os.path.join(PROMPT_DIR, prompt_path)
@@ -153,15 +135,6 @@ def run_agent(system: str, prompt: str, agent: str = DEFAULT_AGENT):
         print(f"\t❌ All models failed: {str(e)}")
         raise
 
-def export(morph: Morph):
-    export_prompt_filepath = os.path.join(PROMPT_DIR, "export.txt")
-    export_prompt = load_prompt(export_prompt_filepath)
-    prompt = morph_to_prompt(morph)
-    reply = run_agent(export_prompt, prompt)
-    export_dir = os.path.join(OUTPUT_DIR, morph.name)
-    os.makedirs(export_dir, exist_ok=True)
-    reply_to_morph(reply, f"export.{morph.name}", export_dir)
-
 
 def mutate(protomorph: Morph, mutation_prompt_filename: str) -> Morph:
     print("🧫 mutating...")
@@ -174,13 +147,14 @@ def mutate(protomorph: Morph, mutation_prompt_filename: str) -> Morph:
         print("\t\t🍯 adding glazing prompt...")
         glazing_prompt_filepath = os.path.join(PROMPT_DIR, "glazing.txt")
         system += f"\n\n{load_prompt(glazing_prompt_filepath)}"
-    if random.random() < PROC_ARXIV_PROMPT:
-        print("\t\t📚 adding arxiv prompt...")
-        system += f"\n\n{random_arxiv_abstract()}"
     if random.random() < PROC_ARCDOC_PROMPT:
-        print("\t\t📋 adding challenge prompt...")
-        challenge_prompt_filepath = os.path.join(PROMPT_DIR, "challenge.txt")
-        system += f"\n\n{load_prompt(challenge_prompt_filepath)}"
+        print("\t\t📋 adding documentation prompt...")
+        # https://nvidia.github.io/warp/modules/differentiability.html
+        # https://nvidia.github.io/warp/debugging.html
+        # https://nvidia.github.io/warp/modules/contribution_guide.html
+        # https://nvidia.github.io/warp/configuration.html
+        # https://nvidia.github.io/warp/modules/interoperability.html
+        system += f"\n<helpful_docs>\n{load_prompt(challenge_prompt_filepath)}\n</helpful_docs>"
     prompt = morph_to_prompt(protomorph)
     neomorph_name = str(uuid.uuid4())[:6]
     neomorph_output_dir = os.path.join(OUTPUT_DIR, neomorph_name)
@@ -258,7 +232,6 @@ if __name__ == "__main__":
             morph.score = score
             print(f"\t🏁\t{morph.name} scored {score}")
             morph.state = MorphState.ALREADY_RAN
-            # export(morph)
         
         # write sorted leaderboard
         leaderboard = {k: v for k, v in sorted(leaderboard.items(), key=lambda item: item[1], reverse=True)}
