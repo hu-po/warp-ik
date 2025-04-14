@@ -9,4 +9,4 @@ docker run --gpus all -it --rm --user="root" \
 -v $ROOT_DIR/data:/root/warp-ik/data \
 -v $ROOT_DIR/output:/root/warp-ik/output \
 warp-ik-$DOCKERFILE bash -c "uv venv && source .venv/bin/activate && \
-uv run python /root/warp-ik/src/evolve.py --evolve --recipe $RECIPE"
+uv run python /root/warp-ik/src/run.py --evolve --recipe $RECIPE"

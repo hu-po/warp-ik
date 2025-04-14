@@ -39,16 +39,34 @@ use a morph recipe `ik_geojac,ik_mlp`, specify the compute backend `x86`:
 ./scripts/docker.run.sh x86 ik_geojac,ik_mlp
 ```
 
-render out individual morph
+run the `ik_geojac` morph:
 
 ```bash
-uv run python morphs/ik_6d.py
+./scripts/docker.run.morph ik_geojac
 ```
 
-run morph mutation (code generation only)
+create a mutation of a morph, check the output in `morphs/` folder:
 
 ```bash
-uv run python src/mutate.py --recipe "ik_6d"
+./scripts/docker.run.mutate ik_geojac
+```
+
+start the evolutionary process using a recipe `ik_geojac` as the protomorph, creates a morphline:
+
+```bash
+./scripts/docker.run.evolve ik_geojac
+```
+
+mutate a single morph:
+
+```bash
+python3 mutate.py --morph foo
+```
+
+clean out the output directory:
+
+```bash
+./scripts/clean.sh
 ```
 
 install python dependencies and run cloth sim creation
@@ -91,30 +109,11 @@ uv run python ik_trossen.py
 /home/oop/dev/usd/scripts/usdview_gui.sh /home/oop/dev/cu/warp/ik_trossen.usd
 ```
 
-
-start the evolutionary process using `ik_6d` as the protomorph, creates a morphline:
-
-```bash
-python3 evolve.py --seed 42 --device device --protomorphs ik_6d
-```
-
-mutate a single morph:
-
-```bash
-python3 mutate.py --morph foo
-```
-
-clean out the output directory:
-
-```bash
-./scripts/clean.sh
-```
-
 ```
 @misc{hupo2025warpik,
-  title={warp-ik-evo: inverse kinematics solution evolution},
+  title={warp-ik: inverse kinematics solution evolution using nvidia warp},
   author={Hugo Ponte},
   year={2025},
-  url={https://github.com/hu-po/warp-ik-evo}
+  url={https://github.com/hu-po/warp-ik}
 }
 ```
