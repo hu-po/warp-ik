@@ -1,4 +1,4 @@
-warp-lang[extras]==1.7.0
+# warp-lang[extras]==1.7.0
 trimesh
 wandb
 anthropic

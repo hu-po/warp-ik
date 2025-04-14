@@ -44,10 +44,6 @@ COPY docker/requirements.$DOCKERFILE.txt $WARP_IK_ROOT/requirements.$DOCKERFILE.
 RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && \
     uv pip install -r requirements.$DOCKERFILE.txt
 
-# Print out python dependency versions
-RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && \
-    uv pip freeze
-
 # Set up environment for GPU access
 ENV NVIDIA_VISIBLE_DEVICES=all
 ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
