@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+import sys
 import time
 import numpy as np
 
@@ -24,10 +25,11 @@ log.setLevel(logging.INFO)
 
 @dataclass
 class MorphConfig:
-    morph: str = 'test' # unique identifier for the morph
+    morph: str = 'blank' # unique identifier for the morph (when testing use "blank" morph)
     dockerfile: str = os.environ.get("DOCKERFILE") # dockerfile variant
     root_dir: str = os.environ.get("WARP_IK_ROOT") # root directory of the warp-ik project
     output_dir: str = f"{root_dir}/output" # output directory for the morphs
+    morph_dir: str = f"{root_dir}/morphs" # directory for the morphs
     assets_dir: str = f"{root_dir}/assets" # assets directory for the morphs
     seed: int = 42 # random seed
     device: str = None # nvidia device to run the simulation on
@@ -197,7 +199,7 @@ def compute_ee_error_kernel(
     error_out[base + 5] = ori_err.z
 
 
-class MorphState:
+class BaseMorph:
     def __init__(self, config: MorphConfig):
         log.debug(f"config: {config}")
         self.config = config
@@ -323,7 +325,8 @@ class MorphState:
     def step(self):
         ee_error_flat = self.compute_ee_error().numpy()
         error = ee_error_flat.reshape(self.num_envs, 6, 1)
-        self._step()
+        with wp.ScopedTimer("_step", print=False, active=True, dict=self.profiler):
+            self._step()
 
     def render_gizmos(self):
         if self.renderer is None:
@@ -471,11 +474,12 @@ def run_morph(config: MorphConfig) -> dict:
     log.info(f"gpu enabled: {wp.get_device().is_cuda}")
     log.info("starting simulation")
     results = {}
+    morph_path = os.path.join(config.morph_dir, f"{config.morph}.py")
+    log.info(f"loading morph from {morph_path}")
+    sys.path.append(os.path.dirname(morph_path))
+    MorphClass = importlib.import_module(morph_path).Morph
     with wp.ScopedDevice(config.device):
-        # load the morph class from the python path in morphs directory
-        morph_path = os.path.join(os.path.dirname(__file__), "morphs", f"{config.morph}.py")
-        log.info(f"loading morph from {morph_path}")
-        morph = importlib.import_module(morph_path).Morph(config)
+        morph = MorphClass(config)
         for i in range(config.num_rollouts):
             with wp.ScopedTimer("target_update", print=False, active=True, dict=morph.profiler):
                 morph.targets = morph.target_origin.copy()

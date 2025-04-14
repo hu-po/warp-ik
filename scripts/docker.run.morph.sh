@@ -1,7 +1,7 @@
 #!/bin/bash
 ROOT_DIR="$(dirname "$(dirname "$0")")" # the warp-ik directory
 DOCKERFILE=$1
-MORPH=$2
+MORPH=${2:-blank}
 docker build -f docker/Dockerfile.$DOCKERFILE -t warp-ik-$DOCKERFILE .
 docker run --gpus all -it --rm --user="root" \
 -v $ROOT_DIR/output:/root/warp-ik/output \
