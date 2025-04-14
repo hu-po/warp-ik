@@ -28,8 +28,8 @@ class MutateConfig:
     seed: int = 33
     morph: str = "test" # unique identifier for the morph
     root_dir: str = os.environ.get("WARP_IK_ROOT") # root directory of the warp-ik project
-    morph_dir: str = f"{root_dir}/morphs" # directory for the morphs
-    prompts_dir: str = f"{root_dir}/prompts" # directory for the prompts
+    morph_dir: str = f"{root_dir}/warp_ik/morphs" # directory for the morphs
+    prompts_dir: str = f"{root_dir}/warp_ik/prompts" # directory for the prompts
     enabled_models: List[str] = field(default_factory=lambda: ["gpt", "claude", "gemini", "xapi", "replicate"])
     proc_glaze_prompt: float = 0.5
     proc_helpdocs_prompt: float = 0.1

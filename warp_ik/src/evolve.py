@@ -33,7 +33,7 @@ class EvolveConfig:
     root_dir: str = os.environ.get("WARP_IK_ROOT") # root directory of the warp-ik project
     protomorphs: str = os.environ.get("PROTOMORPHS") # comma separated list of protomorphs to seed evolution
     output_dir: str = f"{root_dir}/output" # output directory for the morphs
-    morph_dir: str = f"{root_dir}/morphs" # directory for the morphs
+    morph_dir: str = f"{root_dir}/warp_ik/morphs" # directory for the morphs
 
 
 def evolve(config: EvolveConfig):

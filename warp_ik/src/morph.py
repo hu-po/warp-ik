@@ -28,9 +28,9 @@ class MorphConfig:
     morph: str = 'blank' # unique identifier for the morph (when testing use "blank" morph)
     dockerfile: str = os.environ.get("DOCKERFILE") # dockerfile variant
     root_dir: str = os.environ.get("WARP_IK_ROOT") # root directory of the warp-ik project
-    output_dir: str = f"{root_dir}/output" # output directory for the morphs
-    morph_dir: str = f"{root_dir}/morphs" # directory for the morphs
     assets_dir: str = f"{root_dir}/assets" # assets directory for the morphs
+    output_dir: str = f"{root_dir}/output" # output directory for the morphs
+    morph_dir: str = f"{root_dir}/warp_ik/morphs" # directory for the morphs
     seed: int = 42 # random seed
     device: str = None # nvidia device to run the simulation on
     headless: bool = False # turns off rendering
