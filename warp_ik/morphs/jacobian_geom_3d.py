@@ -3,10 +3,33 @@ import numpy as np
 
 from warp_ik.src.morph import BaseMorph
 
+@wp.kernel
+def forward_kinematics(
+    body_q: wp.array(dtype=wp.transform),
+    num_links: int,
+    ee_link_index: int,
+    ee_link_offset: wp.vec3,
+    ee_pos: wp.array(dtype=wp.vec3),
+):
+    tid = wp.tid()
+    ee_pos[tid] = wp.transform_point(body_q[tid * num_links + ee_link_index], ee_link_offset)
+
+
 class Morph(BaseMorph):
 
     def _update_config(self):
         self.config.config_extras = {}
+
+    def compute_ee_position(self):
+        """ Performs forward kinematics to compute the end-effector position. """
+        wp.sim.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, None, self.state)
+        wp.launch(
+            forward_kinematics,
+            dim=self.num_envs,
+            inputs=[self.state.body_q, self.num_links, self.ee_link_index, self.ee_link_offset],
+            outputs=[self.ee_pos],
+        )
+        return self.ee_pos
 
     def _step(self):
         """
