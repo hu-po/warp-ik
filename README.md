@@ -30,25 +30,26 @@ uv run python src/test.py
 docker test, specify the compute backend `x86-3090`
 
 ```bash
-./scripts/docker.test.sh x86-3090
+export DOCKERFILE=x86-3090
+./scripts/docker.test.sh
 ```   
 
 run the `template` morph:
 
 ```bash
-./scripts/docker.run.morph.sh x86-3090 template
+./scripts/docker.run.morph.sh template
 ```
 
 start the evolutionary process using protomorphs `jacobian_geom_3d,jacobian_geom_6d`:
 
 ```bash
-./scripts/docker.run.evolve.sh x86-3090 jacobian_geom_3d,jacobian_geom_6d
+./scripts/docker.run.evolve.sh jacobian_geom_3d,jacobian_geom_6d
 ```
 
 create a mutation of a morph, check the output in `warp_ik/morphs/` folder:
 
 ```bash
-./scripts/docker.run.mutate.sh x86-3090 jacobian_geom_3d
+./scripts/docker.run.mutate.sh jacobian_geom_3d
 ```
 
 clean out the output directory:
