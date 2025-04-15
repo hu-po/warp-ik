@@ -68,5 +68,12 @@ export BACKEND="arm-rpi"
 test the backend
 
 ```bash
-git pull && ./scripts/docker.test.sh
+git pull && ./scripts/test.sh
 ```
+
+test the morphs
+
+```bash
+./scripts/test.morph.sh
+```
+
