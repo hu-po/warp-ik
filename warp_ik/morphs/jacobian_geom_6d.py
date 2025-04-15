@@ -1,7 +1,10 @@
 import warp as wp
 import numpy as np
+import logging
 
 from warp_ik.src.morph import BaseMorph
+
+log = logging.getLogger(__name__)
 
 @wp.kernel
 def assign_jacobian_slice_kernel(
@@ -35,7 +38,7 @@ def jacobian_transpose_multiply_kernel(
         sum = 0.0
         for j in range(6):  # 6D error
             sum += jacobians[env_idx, j, dof_idx] * error[env_idx * 6 + j]
-        delta_q[tid] = -alpha * sum  # Note: negative step for 6D version
+        delta_q[tid] = -alpha * sum  # Note: negative step for gradient descent
 
 @wp.kernel
 def add_delta_q_kernel(
@@ -87,27 +90,32 @@ class Morph(BaseMorph):
 
         # Record computation graph for EE error
         with tape:
-            # Get current EE error (includes position and orientation)
+            # Get current 6D EE error (includes position and orientation)
+            # This tensor MUST be computed within the tape to be differentiable
             ee_error_flat_wp = self.compute_ee_error()
 
         # Compute Jacobian rows via backpropagation
         for o in range(6):  # Iterate through 6 error dimensions
             # Create a gradient vector with 1.0 for the current dimension
             select_gradient = np.zeros(6, dtype=np.float32)
-            select_gradient[o] = 1.0
+            select_gradient[o] = 1.0  # Index 0-2=Pos, 3-5=Ori
             e_grad = wp.array(np.tile(select_gradient, self.num_envs), dtype=wp.float32, device=self.config.device)
 
-            # Backpropagate
+            # Backpropagate using the error tensor recorded by the tape
             tape.backward(grads={ee_error_flat_wp: e_grad})
-            q_grad = tape.gradients[self.model.joint_q]
+            q_grad = tape.gradients[self.model.joint_q]  # Gradient of error[o] w.r.t. joint angles
 
-            # Assign this row to the Jacobian matrix on GPU
-            wp.launch(
-                assign_jacobian_slice_kernel,
-                dim=self.num_envs * self.dof,
-                inputs=[jacobians_wp, q_grad, o, self.num_envs, self.dof],
-                device=self.config.device
-            )
+            # Assign this row to the 6xDOF Jacobian matrix on GPU
+            if q_grad is not None:  # Check if gradient exists
+                wp.launch(
+                    assign_jacobian_slice_kernel,
+                    dim=self.num_envs * self.dof,
+                    inputs=[jacobians_wp, q_grad, o, self.num_envs, self.dof],
+                    device=self.config.device
+                )
+            else:
+                # Handle cases where gradient might be None if a joint doesn't affect this dimension
+                log.warning(f"Gradient for dim {o} is None, Jacobian row will be zero.")
 
             # Reset gradients for next dimension
             tape.zero()

@@ -35,7 +35,7 @@ class MorphConfig:
     seed: int = 42 # random seed
     device: str = os.environ.get("DEVICE", None) # nvidia device to run the simulation on
     headless: bool = False # turns off rendering
-    num_envs: int = os.environ.get("NUM_ENVS", 2) # number of parallel environments
+    num_envs: int = os.environ.get("NUM_ENVS", 4) # number of parallel environments
     num_rollouts: int = 2 # number of rollouts to perform
     train_iters: int = 64 # number of training iterations per rollout
     track: bool = False # turns on tracking with wandb
@@ -73,7 +73,7 @@ class MorphConfig:
     ]) # joint limits for arm
     arm_rot_offset: list[tuple[tuple[float, float, float], float]] = field(default_factory=lambda: [
         ((1.0, 0.0, 0.0), -math.pi * 0.5), # quarter turn about x-axis
-        ((0.0, 0.0, 1.0), -math.pi * 0.5), # quarter turn about z-axis
+        # ((0.0, 0.0, 1.0), -math.pi * 0.5), # quarter turn about z-axis
     ]) # list of axis angle rotations for initial arm orientation offset
     qpos_home: list[float] = field(default_factory=lambda: [
         0,          # base joint

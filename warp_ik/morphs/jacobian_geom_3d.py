@@ -1,7 +1,10 @@
 import warp as wp
 import numpy as np
+import logging
 
 from warp_ik.src.morph import BaseMorph
+
+log = logging.getLogger(__name__)
 
 @wp.kernel
 def assign_jacobian_slice_kernel(
@@ -35,7 +38,8 @@ def jacobian_transpose_multiply_kernel(
         sum = 0.0
         for j in range(3):  # 3D error
             sum += jacobians[env_idx, j, dof_idx] * error[env_idx * 3 + j]
-        delta_q[tid] = alpha * sum
+        # Apply negative sign for gradient descent
+        delta_q[tid] = -alpha * sum
 
 @wp.kernel
 def add_delta_q_kernel(
@@ -84,34 +88,39 @@ class Morph(BaseMorph):
 
         # Record computation graph for EE error
         with tape:
-            # Get current EE error (includes position and orientation)
-            ee_error_flat_wp = self.compute_ee_error()
-            # Extract just the position error (first 3 components)
-            error_pos_wp = wp.zeros(self.num_envs * 3, dtype=wp.float32, device=self.config.device)
-            error_pos_np = ee_error_flat_wp.numpy().reshape(self.num_envs, 6)[:, :3]
-            error_pos_wp = wp.array(error_pos_np.flatten(), dtype=wp.float32, device=self.config.device)
+            # Get current FULL 6D EE error (includes position and orientation)
+            # This tensor MUST be computed within the tape to be differentiable
+            ee_error_flat_6d_wp = self.compute_ee_error()
 
-        # Compute Jacobian rows via backpropagation
-        for o in range(3):  # Iterate through x, y, z dimensions
-            # Create a gradient vector with 1.0 for the current dimension
-            select_gradient = np.zeros(3, dtype=np.float32)
-            select_gradient[o] = 1.0
-            e_grad = wp.array(np.tile(select_gradient, self.num_envs), dtype=wp.float32, device=self.config.device)
+        # Compute Jacobian rows via backpropagation using the 6D error
+        for o in range(3):  # Iterate through x, y, z position dimensions
+            # Create a 6D gradient vector with 1.0 for the current *position* dimension
+            select_gradient_6d = np.zeros(6, dtype=np.float32)
+            select_gradient_6d[o] = 1.0  # Index 0=Px, 1=Py, 2=Pz
+            e_grad_6d = wp.array(np.tile(select_gradient_6d, self.num_envs), dtype=wp.float32, device=self.config.device)
 
-            # Backpropagate
-            tape.backward(grads={error_pos_wp: e_grad})
-            q_grad = tape.gradients[self.model.joint_q]
+            # Backpropagate using the ORIGINAL 6D error tensor recorded by the tape
+            tape.backward(grads={ee_error_flat_6d_wp: e_grad_6d})
+            q_grad = tape.gradients[self.model.joint_q]  # Gradient of pos[o] w.r.t. joint angles
 
-            # Assign this row to the Jacobian matrix on GPU
-            wp.launch(
-                assign_jacobian_slice_kernel,
-                dim=self.num_envs * self.dof,
-                inputs=[jacobians_wp, q_grad, o, self.num_envs, self.dof],
-                device=self.config.device
-            )
+            # Assign this row to the 3xDOF Jacobian matrix on GPU
+            if q_grad is not None:  # Check if gradient exists
+                wp.launch(
+                    assign_jacobian_slice_kernel,
+                    dim=self.num_envs * self.dof,
+                    inputs=[jacobians_wp, q_grad, o, self.num_envs, self.dof],
+                    device=self.config.device
+                )
+            else:
+                # Handle cases where gradient might be None if a joint doesn't affect EE pos
+                log.warning(f"Gradient for dim {o} is None, Jacobian row will be zero.")
 
             # Reset gradients for next dimension
             tape.zero()
+
+        # Extract 3D position error AFTER gradient computation for the update step
+        error_pos_np = ee_error_flat_6d_wp.numpy().reshape(self.num_envs, 6)[:, :3].flatten()
+        error_pos_for_update_wp = wp.array(error_pos_np, dtype=wp.float32, device=self.config.device)
 
         # Initialize delta_q on GPU
         delta_q_wp = wp.zeros(self.num_envs * self.dof, dtype=wp.float32, device=self.config.device)
@@ -120,7 +129,7 @@ class Morph(BaseMorph):
         wp.launch(
             jacobian_transpose_multiply_kernel,
             dim=self.num_envs * self.dof,
-            inputs=[jacobians_wp, error_pos_wp, self.config.step_size, self.num_envs, self.dof],
+            inputs=[jacobians_wp, error_pos_for_update_wp, self.config.step_size, self.num_envs, self.dof],
             outputs=[delta_q_wp],
             device=self.config.device
         )
