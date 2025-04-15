@@ -57,7 +57,7 @@ class Morph(BaseMorph):
     estimates of first and second moments of the gradients.
     """
 
-    def __init__(self, config: MorphConfig):
+    def __init__(self, config):
         """Initializes the Adam morph, including optimizer state."""
         super().__init__(config) # Call BaseMorph init first
 

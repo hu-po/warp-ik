@@ -1,5 +1,3 @@
-system specs saved to /tmp/specs.txt
-# Specs for `bee79cf9812d`
 Generated on Mon Apr 14 16:36:59 UTC 2025
 
 

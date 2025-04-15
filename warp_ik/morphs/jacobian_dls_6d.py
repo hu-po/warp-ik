@@ -73,15 +73,15 @@ class Morph(BaseMorph):
             tape.backward(grads={ee_error_wp: e_grad_flat})
             q_grad_i = tape.gradients[self.model.joint_q] # Gradient for all joints, all envs
 
-            # Reshape and assign the gradient to the correct slice of the Jacobian tensor
-            # q_grad_i shape is (num_envs * dof)
-            # jacobians_wp[:, o, :] needs shape (num_envs, dof)
-            # We need to view q_grad_i as (num_envs, dof)
-            q_grad_reshaped = wp.reshape(q_grad_i, (self.num_envs, self.dof))
-            wp.copy(src=q_grad_reshaped, dst=wp.slice_tensor(jacobians_wp, 1, o, o + 1)) # Assigns to jacobians_wp[:, o, :]
-            # wp.copy(src=wp.reshape(q_grad_i, (self.num_envs, self.dof)),
-            #         dst=jacobians_wp.slice((0, o, 0), (self.num_envs, o + 1, self.dof))) #TODO check syntax
-
+            if q_grad_i: # Check if gradient exists
+                # Reshape the flat gradient array using the array's method
+                q_grad_reshaped = q_grad_i.reshape((self.num_envs, self.dof))
+                # Assign the reshaped gradient directly to the Jacobian slice
+                jacobians_wp[:, o, :] = q_grad_reshaped
+            else:
+                # Handle case where gradient might be None (though unlikely here if q affects error)
+                log.warning(f"Gradient computation returned None for dimension {o} in DLS step.")
+                # jacobians_wp[:, o, :] remains zero from initialization
             tape.zero()
         # end_jacobian_time = time.time()
         # print(f"Jacobian computation time: {end_jacobian_time - start_jacobian_time:.4f} s")

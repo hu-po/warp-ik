@@ -1,5 +1,3 @@
-system specs saved to /tmp/specs.txt
-# Specs for `193b69069337`
 Generated on Mon Apr 14 16:31:56 UTC 2025
 
 

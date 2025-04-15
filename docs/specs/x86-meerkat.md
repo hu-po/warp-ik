@@ -1,5 +1,3 @@
-system specs saved to /tmp/specs.txt
-# Specs for `a67e578c644b`
 Generated on Mon Apr 14 16:32:08 UTC 2025
 
 
