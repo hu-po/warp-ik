@@ -1,8 +1,12 @@
 #!/bin/bash
 ROOT_DIR="$(dirname "$(dirname "$0")")" # the warp-ik directory
+if [ -z "${BACKEND}" ]; then
+    echo "Error: BACKEND environment variable is not set"
+    exit 1
+fi
 HOSTNAME=$(hostname)
 OUTPUT_FILE="$ROOT_DIR/output/specs.md"
-echo "# Specs for \`$HOSTNAME\`" > "$OUTPUT_FILE"
+echo "# Specs for \`$BACKEND\`" > "$OUTPUT_FILE"
 echo "Generated on $(date)" >> "$OUTPUT_FILE"
 echo "" >> "$OUTPUT_FILE"
 declare -A COMMANDS=(

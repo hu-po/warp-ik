@@ -8,20 +8,26 @@ from warp_ik.src.morph import BaseMorph
 
 @wp.kernel
 def assign_jacobian_slice_kernel(
-    jacobians_out: wp.array(dtype=wp.float32, ndim=3), # Target: (num_envs, 6, dof)
-    gradient_in: wp.array(dtype=wp.float32, ndim=2),  # Source: (num_envs, dof)
-    dim_index: int, # The 'o' index (0 to 5) for the middle dimension
-    num_dof: int    # Needed to map thread index correctly
+    jacobians: wp.array(dtype=wp.float32),  # Shape: (num_envs, 6, dof)
+    q_grad: wp.array(dtype=wp.float32),     # Shape: (num_envs * dof)
+    dim_idx: int,                           # Which dimension (0-5)
+    num_envs: int,
+    dof: int
 ):
-    # Map thread index to environment and DOF index
+    tid = wp.tid()  # Thread per environment
+    env_idx = tid // dof
+    dof_idx = tid % dof
+    if env_idx < num_envs:
+        jacobians[env_idx, dim_idx, dof_idx] = q_grad[tid]
+
+@wp.kernel
+def add_delta_q_kernel(
+    joint_q: wp.array(dtype=wp.float32),
+    delta_q: wp.array(dtype=wp.float32),
+    out_joint_q: wp.array(dtype=wp.float32)
+):
     tid = wp.tid()
-    env_index = tid // num_dof # Integer division gives environment index
-    dof_index = tid % num_dof  # Modulo gives DOF index within the environment
-
-    # Assign the value from the source gradient array to the specific slice
-    # in the target jacobian array based on the calculated indices and the passed dim_index.
-    jacobians_out[env_index, dim_index, dof_index] = gradient_in[env_index, dof_index]
-
+    out_joint_q[tid] = joint_q[tid] + delta_q[tid]
 
 class Morph(BaseMorph):
     """
@@ -60,75 +66,64 @@ class Morph(BaseMorph):
         """
         Performs one IK step using the Damped Least Squares method.
 
-        1. Computes the 6D pose error `e`.
-        2. Computes the 6D Jacobian `J` using `wp.Tape`.
-        3. Transfers `J` and `e` to NumPy arrays.
-        4. Calculates the DLS update `delta_q` using NumPy linear algebra:
-           - Computes `JJT = J @ J.T`
-           - Forms the damped matrix `A = JJT + lambda^2 * I`
-           - Solves the system `A * x = e` for `x`
-           - Computes `delta_q = step_size * J.T @ x`
-        5. Updates the joint angles `q = q + delta_q`.
+        1. Computes the 6D pose error using compute_ee_error.
+        2. Computes the 6D Jacobian using wp.Tape and GPU kernels.
+        3. Transfers J and error to CPU for DLS solve.
+        4. Calculates the DLS update using NumPy linear algebra:
+           - Computes JJT = J @ J.T
+           - Forms the damped matrix A = JJT + lambda^2 * I
+           - Solves the system A * x = e for x
+           - Computes delta_q = step_size * J.T @ x
+        5. Updates the joint angles on GPU.
         """
         lambda_val = self.config.config_extras["lambda"]
         lambda_sq = lambda_val * lambda_val
         step_size = self.config.step_size
 
+        # Initialize Jacobian on GPU
         jacobians_wp = wp.zeros((self.num_envs, 6, self.dof), dtype=wp.float32, device=self.config.device)
         tape = wp.Tape()
 
-        # Explicitly ensure the array requires gradients before taping
-        if not self.model.joint_q.requires_grad:
-            log.warning("Force-setting requires_grad=True on joint_q before tape.")
-            self.model.joint_q.requires_grad = True
-
-        # Record computation graph for the 6D EE error
+        # Record computation graph for EE error
         with tape:
-            ee_error_wp = self.compute_ee_error() # Shape (num_envs * 6)
+            ee_error_flat_wp = self.compute_ee_error()
 
         # Compute Jacobian rows via backpropagation
-        for o in range(6):
+        for o in range(6):  # Iterate through 6 error dimensions
+            # Create a gradient vector with 1.0 for the current dimension
             select_gradient = np.zeros(6, dtype=np.float32)
             select_gradient[o] = 1.0
-            e_grad_flat = wp.array(np.tile(select_gradient, self.num_envs), dtype=wp.float32, device=self.config.device)
-            
-            tape.backward(grads={ee_error_wp: e_grad_flat})
+            e_grad = wp.array(np.tile(select_gradient, self.num_envs), dtype=wp.float32, device=self.config.device)
 
-            # Use the current self.model.joint_q as the key
-            try:
-                q_grad_i = tape.gradients[self.model.joint_q]
-            except KeyError:
-                log.error(f"KeyError accessing gradients for self.model.joint_q (dim {o}).")
-                log.error(f"joint_q requires_grad: {self.model.joint_q.requires_grad}")
-                log.error(f"Available gradient keys: {list(tape.gradients.keys())}")
-                q_grad_i = None
+            # Backpropagate
+            tape.backward(grads={ee_error_flat_wp: e_grad})
+            q_grad = tape.gradients[self.model.joint_q]
 
-            if q_grad_i:
-                q_grad_reshaped = q_grad_i.reshape((self.num_envs, self.dof))
+            if q_grad is not None:
+                # Assign this row to the Jacobian matrix on GPU
                 wp.launch(
-                    kernel=assign_jacobian_slice_kernel,
+                    assign_jacobian_slice_kernel,
                     dim=self.num_envs * self.dof,
-                    inputs=[jacobians_wp, q_grad_reshaped, o, self.dof],
+                    inputs=[jacobians_wp, q_grad, o, self.num_envs, self.dof],
                     device=self.config.device
                 )
             else:
-                pass  # Jacobian column remains zero
+                log.warning(f"No gradients found for dimension {o}")
 
+            # Reset gradients for next dimension
             tape.zero()
 
-        # Get current error and Jacobian as NumPy arrays (GPU -> CPU transfer)
-        jacobians_np = jacobians_wp.numpy() # Shape (num_envs, 6, dof)
-        error_flat_np = self.compute_ee_error().numpy() # Recompute ensures consistency, Shape (num_envs*6)
-        error_np = error_flat_np.reshape(self.num_envs, 6, 1) # Shape (num_envs, 6, 1)
+        # Transfer data to CPU for DLS solve
+        jacobians_np = jacobians_wp.numpy()  # Shape (num_envs, 6, dof)
+        error_np = ee_error_flat_wp.numpy().reshape(self.num_envs, 6, 1)  # Shape (num_envs, 6, 1)
 
-        # --- Perform DLS update using NumPy ---
+        # Perform DLS solve on CPU
         delta_q_np = np.zeros((self.num_envs, self.dof, 1), dtype=np.float32)
         identity_6 = np.identity(6, dtype=np.float32)
 
-        # Process each environment individually (easier for NumPy solve)
-        # A batched solve might be possible but adds complexity
+        # Process each environment individually
         for e in range(self.num_envs):
-            J = jacobians_np[e] # Shape (6, dof)
+            J = jacobians_np[e]  # Shape (6, dof)
             J_T = J.T           # Shape (dof, 6)
             err = error_np[e]   # Shape (6, 1)
 
@@ -137,26 +132,21 @@ class Morph(BaseMorph):
 
             try:
                 # Solve (JJT + lambda^2*I) * x = error
-                solve_result = np.linalg.solve(A, err) # Shape (6, 1)
-
-                # Compute delta_q = J^T * solve_result
-                delta_q_np[e] = J_T @ solve_result     # Shape (dof, 1)
-
+                solve_result = np.linalg.solve(A, err)  # Shape (6, 1)
+                # Compute delta_q = step_size * J^T * solve_result
+                delta_q_np[e] = step_size * (J_T @ solve_result)  # Shape (dof, 1)
             except np.linalg.LinAlgError:
-                # Handle cases where solving fails (should be rare with damping)
-                # print(f"Warning: NumPy linalg.solve failed for env {e}. Skipping update.")
-                pass # Keep delta_q_np[e] as zeros
+                log.warning(f"DLS solve failed for environment {e}, skipping update")
+                continue
 
-        # Scale by step size
-        delta_q_np *= step_size
+        # Transfer delta_q back to GPU and update joint angles
+        delta_q_wp = wp.array(delta_q_np.flatten(), dtype=wp.float32, device=self.config.device)
 
-        # Update joint angles (CPU -> GPU transfer)
-        current_q = self.model.joint_q.numpy()
-        new_q = current_q + delta_q_np.flatten() # Flatten delta_q to match joint_q shape
-
-        self.model.joint_q = wp.array(
-            new_q,
-            dtype=wp.float32,
-            requires_grad=self.config.config_extras["joint_q_requires_grad"],
+        # Update joint angles on GPU
+        wp.launch(
+            add_delta_q_kernel,
+            dim=self.num_envs * self.dof,
+            inputs=[self.model.joint_q, delta_q_wp],
+            outputs=[self.model.joint_q],
             device=self.config.device
         )

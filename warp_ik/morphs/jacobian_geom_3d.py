@@ -4,30 +4,47 @@ import numpy as np
 from warp_ik.src.morph import BaseMorph
 
 @wp.kernel
-def forward_kinematics(
-    body_q: wp.array(dtype=wp.transform),
-    num_links: int,
-    ee_link_index: int,
-    ee_link_offset: wp.vec3,
-    ee_pos: wp.array(dtype=wp.vec3), # Output: end-effector positions
+def assign_jacobian_slice_kernel(
+    jacobians: wp.array(dtype=wp.float32),  # Shape: (num_envs, 3, dof)
+    q_grad: wp.array(dtype=wp.float32),     # Shape: (num_envs * dof)
+    dim_idx: int,                           # Which dimension (0=x, 1=y, 2=z)
+    num_envs: int,
+    dof: int
 ):
-    """
-    Warp kernel to compute the end-effector position using forward kinematics.
+    tid = wp.tid()  # Thread per environment
+    env_idx = tid // dof
+    dof_idx = tid % dof
+    if env_idx < num_envs:
+        jacobians[env_idx, dim_idx, dof_idx] = q_grad[tid]
 
-    Args:
-        body_q: Array of body transforms (position and orientation) for all links in all envs.
-        num_links: Number of links per robot arm.
-        ee_link_index: Index of the end-effector link within an arm's links.
-        ee_link_offset: Offset vector from the end-effector link's origin to the tip.
-        ee_pos: Output array to store the computed end-effector world positions.
-    """
-    tid = wp.tid() # Thread ID, corresponds to environment index
-    # Calculate the flat index for the end-effector link of the current environment
-    ee_link_flat_index = tid * num_links + ee_link_index
-    # Get the transform (position and orientation) of the end-effector link
-    ee_link_transform = body_q[ee_link_flat_index]
-    # Transform the offset vector from link space to world space and add to link position
-    ee_pos[tid] = wp.transform_point(ee_link_transform, ee_link_offset)
+@wp.kernel
+def jacobian_transpose_multiply_kernel(
+    jacobians: wp.array(dtype=wp.float32),  # Shape: (num_envs, 3, dof)
+    error: wp.array(dtype=wp.float32),      # Shape: (num_envs * 3)
+    alpha: float,                           # Step size
+    num_envs: int,
+    dof: int,
+    delta_q: wp.array(dtype=wp.float32)     # Output: (num_envs * dof)
+):
+    tid = wp.tid()  # Thread per DOF per environment
+    env_idx = tid // dof
+    dof_idx = tid % dof
+    
+    if env_idx < num_envs:
+        # Compute (J^T * error)_i = sum_j J_ji * error_j
+        sum = 0.0
+        for j in range(3):  # 3D error
+            sum += jacobians[env_idx, j, dof_idx] * error[env_idx * 3 + j]
+        delta_q[tid] = alpha * sum
+
+@wp.kernel
+def add_delta_q_kernel(
+    joint_q: wp.array(dtype=wp.float32),
+    delta_q: wp.array(dtype=wp.float32),
+    out_joint_q: wp.array(dtype=wp.float32)
+):
+    tid = wp.tid()
+    out_joint_q[tid] = joint_q[tid] + delta_q[tid]
 
 class Morph(BaseMorph):
     """
@@ -49,87 +66,72 @@ class Morph(BaseMorph):
         Sets the step size for joint updates and ensures gradients are enabled
         for joint angles, as this method relies on automatic differentiation.
         """
-        self.config.step_size = 1.0 # Step size for joint angle updates
+        self.config.step_size = 1.0  # Step size for joint angle updates
         self.config.config_extras = {
-            "joint_q_requires_grad": True, # Gradients required for autodiff
+            "joint_q_requires_grad": True,  # Gradients required for autodiff
         }
-
-    def compute_ee_position(self) -> wp.array:
-        """
-        Performs forward kinematics to compute the 3D end-effector position.
-
-        Uses `wp.sim.eval_fk` to update the simulation state based on current joint angles
-        and then launches the `forward_kinematics` kernel to calculate the world position
-        of the end-effector tip for each environment.
-
-        Returns:
-            A Warp array containing the (x, y, z) position of the end-effector for each environment.
-        """
-        # Ensure simulation state (body transforms) is updated based on current joint angles
-        wp.sim.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, None, self.state)
-        # Launch kernel to compute EE positions based on updated state
-        wp.launch(
-            forward_kinematics,
-            dim=self.num_envs,
-            inputs=[self.state.body_q, self.num_links, self.ee_link_index, self.ee_link_offset],
-            outputs=[self.ee_pos], # self.ee_pos is initialized in BaseMorph
-            device=self.config.device
-        )
-        return self.ee_pos
 
     def _step(self):
         """
         Performs one IK step using the 3D Autodiff Geometric Jacobian method.
 
-        It uses `wp.Tape` to record the computation of the end-effector position.
-        Then, for each dimension (x, y, z), it backpropagates a unit gradient
-        to compute the corresponding row of the Jacobian (J).
-
-        The positional error (target_pos - current_pos) is calculated.
-        The change in joint angles is computed using the Jacobian transpose method:
-        delta_q = step_size * J^T * error_pos.
-
-        The computed delta_q is added to the current joint angles.
+        Uses wp.Tape to record the computation of the end-effector position and error.
+        For each dimension (x, y, z), backpropagates a unit gradient to compute
+        the corresponding row of the Jacobian. Updates joint angles using the
+        Jacobian transpose method on the GPU.
         """
-        jacobians = np.empty((self.num_envs, 3, self.dof), dtype=np.float32)
+        # Initialize Jacobian on GPU
+        jacobians_wp = wp.zeros((self.num_envs, 3, self.dof), dtype=wp.float32, device=self.config.device)
         tape = wp.Tape()
 
-        # Record computation graph for EE position
+        # Record computation graph for EE error
         with tape:
-            ee_pos_wp = self.compute_ee_position() # Get current EE positions
+            # Get current EE error (includes position and orientation)
+            ee_error_flat_wp = self.compute_ee_error()
+            # Extract just the position error (first 3 components)
+            error_pos_wp = wp.zeros(self.num_envs * 3, dtype=wp.float32, device=self.config.device)
+            error_pos_np = ee_error_flat_wp.numpy().reshape(self.num_envs, 6)[:, :3]
+            error_pos_wp = wp.array(error_pos_np.flatten(), dtype=wp.float32, device=self.config.device)
 
         # Compute Jacobian rows via backpropagation
-        for o in range(3): # Iterate through x, y, z dimensions
-            # Create a gradient vector with 1.0 for the current dimension, 0.0 otherwise
+        for o in range(3):  # Iterate through x, y, z dimensions
+            # Create a gradient vector with 1.0 for the current dimension
             select_gradient = np.zeros(3, dtype=np.float32)
             select_gradient[o] = 1.0
-            # Tile this gradient for all environments
-            e_grad = wp.array(np.tile(select_gradient, self.num_envs), dtype=wp.vec3)
+            e_grad = wp.array(np.tile(select_gradient, self.num_envs), dtype=wp.float32, device=self.config.device)
 
-            # Backpropagate the gradient through the recorded tape
-            tape.backward(grads={ee_pos_wp: e_grad})
+            # Backpropagate
+            tape.backward(grads={error_pos_wp: e_grad})
+            q_grad = tape.gradients[self.model.joint_q]
 
-            # Extract the gradient with respect to joint angles (this is one row of the Jacobian)
-            q_grad_i = tape.gradients[self.model.joint_q]
-            jacobians[:, o, :] = q_grad_i.numpy().reshape(self.num_envs, self.dof)
+            # Assign this row to the Jacobian matrix on GPU
+            wp.launch(
+                assign_jacobian_slice_kernel,
+                dim=self.num_envs * self.dof,
+                inputs=[jacobians_wp, q_grad, o, self.num_envs, self.dof],
+                device=self.config.device
+            )
 
-            # Reset gradients for the next dimension
+            # Reset gradients for next dimension
             tape.zero()
 
-        # Get current EE position *after* potential tape evaluation (if needed, depends on tape caching)
-        # Recomputing ensures we have the position corresponding to the *start* of the step
-        current_ee_pos_np = self.compute_ee_position().numpy()
+        # Initialize delta_q on GPU
+        delta_q_wp = wp.zeros(self.num_envs * self.dof, dtype=wp.float32, device=self.config.device)
 
-        # Calculate 3D position error
-        error_pos = self.targets - current_ee_pos_np # self.targets is from BaseMorph
-        error_pos_reshaped = error_pos.reshape(self.num_envs, 3, 1)
+        # Compute joint updates using Jacobian transpose method on GPU
+        wp.launch(
+            jacobian_transpose_multiply_kernel,
+            dim=self.num_envs * self.dof,
+            inputs=[jacobians_wp, error_pos_wp, self.config.step_size, self.num_envs, self.dof],
+            outputs=[delta_q_wp],
+            device=self.config.device
+        )
 
-        # Compute joint angle update using Jacobian transpose: delta_q = alpha * J^T * error
-        delta_q = self.config.step_size * np.matmul(jacobians.transpose(0, 2, 1), error_pos_reshaped)
-
-        # Update joint angles
-        self.model.joint_q = wp.array(
-            self.model.joint_q.numpy() + delta_q.flatten(),
-            dtype=wp.float32,
-            requires_grad=self.config.config_extras["joint_q_requires_grad"],
+        # Update joint angles on GPU
+        wp.launch(
+            add_delta_q_kernel,
+            dim=self.num_envs * self.dof,
+            inputs=[self.model.joint_q, delta_q_wp],
+            outputs=[self.model.joint_q],
+            device=self.config.device
         )

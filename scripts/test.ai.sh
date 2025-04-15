@@ -1,12 +1,9 @@
 #!/bin/bash
 ROOT_DIR="$(dirname "$(dirname "$0")")" # the warp-ik directory
-
-# Check if BACKEND environment variable is set
 if [ -z "${BACKEND}" ]; then
     echo "Error: BACKEND environment variable is not set"
     exit 1
 fi
-
 docker build -f docker/Dockerfile.$BACKEND -t warp-ik-$BACKEND .
 GPU_FLAG=""
 if [[ "$BACKEND" != "x86-meerkat" && "$BACKEND" != "arm-rpi" ]]; then

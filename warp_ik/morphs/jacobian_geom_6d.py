@@ -3,6 +3,49 @@ import numpy as np
 
 from warp_ik.src.morph import BaseMorph
 
+@wp.kernel
+def assign_jacobian_slice_kernel(
+    jacobians: wp.array(dtype=wp.float32),  # Shape: (num_envs, 6, dof)
+    q_grad: wp.array(dtype=wp.float32),     # Shape: (num_envs * dof)
+    dim_idx: int,                           # Which dimension (0-5)
+    num_envs: int,
+    dof: int
+):
+    tid = wp.tid()  # Thread per environment
+    env_idx = tid // dof
+    dof_idx = tid % dof
+    if env_idx < num_envs:
+        jacobians[env_idx, dim_idx, dof_idx] = q_grad[tid]
+
+@wp.kernel
+def jacobian_transpose_multiply_kernel(
+    jacobians: wp.array(dtype=wp.float32),  # Shape: (num_envs, 6, dof)
+    error: wp.array(dtype=wp.float32),      # Shape: (num_envs * 6)
+    alpha: float,                           # Step size
+    num_envs: int,
+    dof: int,
+    delta_q: wp.array(dtype=wp.float32)     # Output: (num_envs * dof)
+):
+    tid = wp.tid()  # Thread per DOF per environment
+    env_idx = tid // dof
+    dof_idx = tid % dof
+    
+    if env_idx < num_envs:
+        # Compute (J^T * error)_i = sum_j J_ji * error_j
+        sum = 0.0
+        for j in range(6):  # 6D error
+            sum += jacobians[env_idx, j, dof_idx] * error[env_idx * 6 + j]
+        delta_q[tid] = -alpha * sum  # Note: negative step for 6D version
+
+@wp.kernel
+def add_delta_q_kernel(
+    joint_q: wp.array(dtype=wp.float32),
+    delta_q: wp.array(dtype=wp.float32),
+    out_joint_q: wp.array(dtype=wp.float32)
+):
+    tid = wp.tid()
+    out_joint_q[tid] = joint_q[tid] + delta_q[tid]
+
 class Morph(BaseMorph):
     """
     Inverse Kinematics Morph using Autodiff Geometric Jacobian (6D Pose).
@@ -26,63 +69,68 @@ class Morph(BaseMorph):
         Sets the step size for joint updates and ensures gradients are enabled
         for joint angles, as this method relies on automatic differentiation.
         """
-        self.config.step_size = 1.0 # Step size for joint angle updates
+        self.config.step_size = 1.0  # Step size for joint angle updates
         self.config.config_extras = {
-            "joint_q_requires_grad": True, # Gradients required for autodiff
+            "joint_q_requires_grad": True,  # Gradients required for autodiff
         }
 
     def _step(self):
         """
         Performs one IK step using the 6D Autodiff Geometric Jacobian method.
 
-        It uses `wp.Tape` to record the computation of the 6D end-effector pose error
-        (position and orientation), which is calculated by `self.compute_ee_error()`.
-        Then, for each of the 6 error dimensions, it backpropagates a unit gradient
-        to compute the corresponding row of the Jacobian (J).
-
-        The change in joint angles is computed using the Jacobian transpose method:
-        delta_q = -step_size * J^T * error_6d.
-
-        The computed delta_q is added to the current joint angles.
+        Uses wp.Tape to record the computation of the 6D end-effector pose error.
+        For each of the 6 error dimensions, backpropagates a unit gradient to compute
+        the corresponding row of the Jacobian. Updates joint angles using the
+        Jacobian transpose method on the GPU.
         """
-        jacobians = np.empty((self.num_envs, 6, self.dof), dtype=np.float32)
+        # Initialize Jacobian on GPU
+        jacobians_wp = wp.zeros((self.num_envs, 6, self.dof), dtype=wp.float32, device=self.config.device)
         tape = wp.Tape()
 
-        # Record computation graph for the 6D EE error
+        # Record computation graph for EE error
         with tape:
-            # self.ee_error is computed and stored by this call
-            ee_error_wp = self.compute_ee_error()
+            # Get current EE error (includes position and orientation)
+            ee_error_flat_wp = self.compute_ee_error()
 
         # Compute Jacobian rows via backpropagation
-        for o in range(6): # Iterate through 6 error dimensions (px, py, pz, ox, oy, oz)
-            # Create a gradient vector with 1.0 for the current dimension, 0.0 otherwise
+        for o in range(6):  # Iterate through 6 error dimensions
+            # Create a gradient vector with 1.0 for the current dimension
             select_gradient = np.zeros(6, dtype=np.float32)
             select_gradient[o] = 1.0
-            # Tile this gradient for all environments (flattened error array)
-            e_grad_flat = wp.array(np.tile(select_gradient, self.num_envs), dtype=wp.float32)
+            e_grad = wp.array(np.tile(select_gradient, self.num_envs), dtype=wp.float32, device=self.config.device)
 
-            # Backpropagate the gradient through the recorded tape
-            # The gradient source is the flattened ee_error array
-            tape.backward(grads={ee_error_wp: e_grad_flat})
+            # Backpropagate
+            tape.backward(grads={ee_error_flat_wp: e_grad})
+            q_grad = tape.gradients[self.model.joint_q]
 
-            # Extract the gradient with respect to joint angles (this is one row of the Jacobian)
-            q_grad_i = tape.gradients[self.model.joint_q]
-            jacobians[:, o, :] = q_grad_i.numpy().reshape(self.num_envs, self.dof)
+            # Assign this row to the Jacobian matrix on GPU
+            wp.launch(
+                assign_jacobian_slice_kernel,
+                dim=self.num_envs * self.dof,
+                inputs=[jacobians_wp, q_grad, o, self.num_envs, self.dof],
+                device=self.config.device
+            )
 
-            # Reset gradients for the next dimension
+            # Reset gradients for next dimension
             tape.zero()
 
-        # Get the current 6D error *after* tape evaluation (recompute for consistency)
-        # This ensures we use the error corresponding to the joint angles at the *start* of the step
-        ee_error_flat_np = self.compute_ee_error().numpy()
-        error_6d_reshaped = ee_error_flat_np.reshape(self.num_envs, 6, 1)
+        # Initialize delta_q on GPU
+        delta_q_wp = wp.zeros(self.num_envs * self.dof, dtype=wp.float32, device=self.config.device)
 
-        # Compute joint angle update using Jacobian transpose: delta_q = -alpha * J^T * error
-        delta_q = -self.config.step_size * np.matmul(jacobians.transpose(0, 2, 1), error_6d_reshaped)
+        # Compute joint updates using Jacobian transpose method on GPU
+        wp.launch(
+            jacobian_transpose_multiply_kernel,
+            dim=self.num_envs * self.dof,
+            inputs=[jacobians_wp, ee_error_flat_wp, self.config.step_size, self.num_envs, self.dof],
+            outputs=[delta_q_wp],
+            device=self.config.device
+        )
 
-        # Update joint angles
-        self.model.joint_q = wp.array(
-            self.model.joint_q.numpy() + delta_q.flatten(),
-            dtype=wp.float32,
-            requires_grad=self.config.config_extras["joint_q_requires_grad"],
+        # Update joint angles on GPU
+        wp.launch(
+            add_delta_q_kernel,
+            dim=self.num_envs * self.dof,
+            inputs=[self.model.joint_q, delta_q_wp],
+            outputs=[self.model.joint_q],
+            device=self.config.device
         )

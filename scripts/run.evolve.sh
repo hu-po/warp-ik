@@ -1,15 +1,16 @@
 #!/bin/bash
 ROOT_DIR="$(dirname "$(dirname "$0")")" # the warp-ik directory
-
-# Check if BACKEND environment variable is set
+PROTOMORPHS=$1
 if [ -z "${BACKEND}" ]; then
     echo "Error: BACKEND environment variable is not set"
     exit 1
 fi
-
-PROTOMORPHS=$1
 docker build -f docker/Dockerfile.$BACKEND -t warp-ik-$BACKEND .
-docker run --gpus all -it --rm --user="root" \
+GPU_FLAG=""
+if [[ "$BACKEND" != "x86-meerkat" && "$BACKEND" != "arm-rpi" ]]; then
+    GPU_FLAG="--gpus all"
+fi
+docker run $GPU_FLAG -it --rm --user="root" \
 -v $ROOT_DIR/output:/root/warp-ik/output \
 -v $ROOT_DIR/warp_ik/morphs:/root/warp-ik/warp_ik/morphs \
 warp-ik-$BACKEND bash -c "

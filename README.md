@@ -40,9 +40,10 @@ test that ai (openai, anthropic, gemini, xai, replicate) is working:
 ./scripts/test.ai.sh
 ```
 
-test that the morphs work:
+test that the morphs work, tune a number of parallel environments `NUM_ENVS` based on your GPU memory:
 
 ```bash
+export NUM_ENVS=32
 ./scripts/test.morph.sh
 ```
 

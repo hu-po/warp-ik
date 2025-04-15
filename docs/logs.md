@@ -59,10 +59,19 @@ when logging in fresh to each node, set the environment variables:
 
 ```bash
 export BACKEND="x86-3090"
+export NUM_ENVS=2
+
 export BACKEND="arm-agx"
+export NUM_ENVS=16
+
 export BACKEND="x86-meerkat"
+export NUM_ENVS=16
+
 export BACKEND="arm-gh200"
+export NUM_ENVS=16
+
 export BACKEND="arm-rpi"
+export NUM_ENVS=2
 ```
 
 test the backend

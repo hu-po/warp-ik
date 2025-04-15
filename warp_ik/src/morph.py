@@ -546,7 +546,6 @@ class BaseMorph:
         # --- End Renderer Setup ---
 
         # --- Simulation State ---
-        # ee_pos is mainly used by jacobian_geom_3d, maybe initialize there?
         # For now, keep it here for potential broader use.
         self.ee_pos = wp.zeros(self.num_envs, dtype=wp.vec3, requires_grad=True, device=self.config.device)
         # ee_error stores the flattened 6D error [err_px, py, pz, ox, oy, oz] * num_envs
