@@ -8,22 +8,16 @@ import math
 import os
 import sys
 import time
-try:
-    import psutil
-except ImportError:
-    psutil = None
+import psutil
 import numpy as np
-try:
-    import wandb
-except ImportError:
-    wandb = None
+import wandb
 import warp as wp
 import warp.sim
 import warp.sim.render
 
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    format='%(asctime)s|%(name)s|%(levelname)s|%(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 log = logging.getLogger(__name__)
@@ -456,7 +450,7 @@ class BaseMorph:
 
 
         # --- Target origin computation and initial joint angles ---
-        self.target_origin = []
+        target_origins = [] # List to store wp.vec3 origins temporarily
         self.arm_spacing_xz = self.config.arm_spacing_xz
         self.arm_height = self.config.arm_height
         self.num_rows = int(math.sqrt(self.num_envs)) if self.num_envs > 0 else 0
@@ -474,12 +468,12 @@ class BaseMorph:
             x = col * self.arm_spacing_xz
             z = row * self.arm_spacing_xz
             base_translation = wp.vec3(x, self.arm_height, z)
-            base_quat = _initial_arm_orientation_wp # Use the final computed Warp orientation
+            base_quat = self.initial_arm_orientation # Use the final computed Warp orientation
 
             # Define the target offset in robot coordinates and transform to world
             target_offset_local = wp.vec3(self.config.target_offset)
-            target_world = wp.transform_point(wp.transform(base_translation, base_quat), self.ee_link_offset)
-            self.target_origin.append(target_world)
+            target_world = wp.transform_point(wp.transform(base_translation, base_quat), target_offset_local)
+            target_origins.append(target_world)
 
             # Add arm instance to the main builder
             builder.add_builder(articulation_builder, xform=wp.transform(base_translation, self.initial_arm_orientation))
@@ -506,10 +500,17 @@ class BaseMorph:
 
             initial_joint_q.extend(env_joint_q)
 
-        self.target_origin = wp.array(self.target_origin, dtype=wp.vec3, device=self.config.device)
-        # Initial target orientation (identity relative to base)
-        self.target_ori = wp.tile(self.initial_arm_orientation, (self.num_envs, 1))
-        log.debug(f"Initial target orientations (first env): {self.target_ori[0]}")
+        # Convert target origins list to Warp array
+        self.target_origin_wp = wp.array(target_origins, dtype=wp.vec3, device=self.config.device)
+        # Keep numpy version if needed for compatibility
+        self.target_origin_np = self.target_origin_wp.numpy()
+
+        # *** CORRECTED: Initial target orientation using np.tile first ***
+        initial_arm_orientation_np = np.array(list(self.initial_arm_orientation), dtype=np.float32)
+        initial_target_ori_np = np.tile(initial_arm_orientation_np, (self.num_envs, 1))
+        # Create the persistent Warp array from the tiled NumPy array
+        self.target_ori_wp = wp.array(initial_target_ori_np, dtype=wp.quat, device=self.config.device, requires_grad=False)
+        log.debug(f"Initial target orientations (first env): {initial_target_ori_np[0]}")
 
         # Finalize model.
         self.model = builder.finalize(device=self.config.device) # Specify device
@@ -559,13 +560,13 @@ class BaseMorph:
         self.state = self.model.state(requires_grad=True) # Get state AFTER setting initial joint_q
 
         # Initialize runtime target arrays on GPU
-        self.targets_wp = wp.array(self.target_origin, dtype=wp.vec3, device=self.config.device, requires_grad=False)
-        initial_target_ori_wp = wp.tile(self.initial_arm_orientation, (self.num_envs, 1))
-        self.target_ori_wp = wp.array(initial_target_ori_wp, dtype=wp.quat, device=self.config.device, requires_grad=False)
+        self.targets_wp = wp.clone(self.target_origin_wp) # Clone for runtime modification
 
-        # Keep numpy versions for compatibility
-        self.targets = self.target_origin.copy()
-        self.target_ori = initial_target_ori_wp.copy()
+        # Keep numpy versions for compatibility (if needed by other code)
+        # Ensure these are created *before* the originals are potentially modified
+        self.target_origin_np = self.target_origin_wp.numpy() # Get numpy version from wp array
+        self.targets = self.target_origin_np.copy() # Copy the numpy version
+        self.target_ori = initial_target_ori_np.copy() # Copy the numpy version used for creation
 
         # Profiler dictionary
         self.profiler = {}
@@ -751,7 +752,7 @@ def run_morph(config: MorphConfig) -> dict:
                         kernel=update_targets_kernel,
                         dim=morph.num_envs,
                         inputs=[
-                            wp.array(morph.target_origin, dtype=wp.vec3, device=morph.config.device), # Pass base origins
+                            wp.array(morph.target_origin_np, dtype=wp.vec3, device=morph.config.device), # Pass base origins
                             morph.initial_arm_orientation, # Pass base orientation
                             config.target_spawn_pos_noise,
                             config.target_spawn_rot_noise,
