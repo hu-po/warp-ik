@@ -347,13 +347,7 @@ class BaseMorph:
                         entity=self.config.wandb_entity,
                         project=self.config.wandb_project,
                         name=f"{self.config.backend}/{self.config.morph}",
-                        config=config_dict,
-                        # Explicitly enable system metrics monitoring
-                        settings=wandb.Settings(
-                            system_metrics=True,
-                            stats_sample_rate_seconds=2,
-                            stats_samples_to_average=1
-                        )
+                        config=config_dict
                     )
                     # Update config with the *final* values used
                     self.wandb_run.config.update({
