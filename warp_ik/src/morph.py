@@ -458,7 +458,10 @@ class BaseMorph:
             self._step() # Execute the morph's core logic
         # Clipping joint angles after the step to respect limits
         current_q = self.model.joint_q.numpy()
-        clipped_q = np.clip(current_q, self.joint_limits[:, 0], self.joint_limits[:, 1])
+        # Tile the joint limits to match the number of environments
+        min_limits = np.tile(self.joint_limits[:, 0], self.num_envs)
+        max_limits = np.tile(self.joint_limits[:, 1], self.num_envs)
+        clipped_q = np.clip(current_q, min_limits, max_limits)
         self.model.joint_q.assign(wp.array(clipped_q, dtype=wp.float32, device=self.config.device))
 
 
