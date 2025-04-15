@@ -17,7 +17,7 @@ git clone https://github.com/hu-po/warp-ik.git
 cd warp-ik
 sudo usermod -aG docker ubuntu
 newgrp docker
-./scripts/docker.test.sh arm-gh200
+./scripts/test.sh arm-gh200
 ```
 
 # Running Morphs
@@ -25,34 +25,34 @@ newgrp docker
 testing out all the morphs locally
 
 ```bash
-./scripts/docker.run.morph.sh x86-3090 template && \
+./scripts/run.morph.sh x86-3090 template && \
 usdview /home/oop/dev/warp-ik/output/template/recording.usd
 ```
 
 ```bash
-./scripts/docker.run.morph.sh x86-3090 jacobian_geom_3d && \
+./scripts/run.morph.sh x86-3090 jacobian_geom_3d && \
 usdview /home/oop/dev/warp-ik/output/jacobian_geom_3d/recording.usd
 ```
 
 ```bash
-./scripts/docker.run.morph.sh x86-3090 jacobian_geom_6d && \
+./scripts/run.morph.sh x86-3090 jacobian_geom_6d && \
 usdview /home/oop/dev/warp-ik/output/jacobian_geom_6d/recording.usd
 ```
 
 ```bash
-./scripts/docker.run.morph.sh x86-3090 jacobian_fd && \
+./scripts/run.morph.sh x86-3090 jacobian_fd && \
 usdview /home/oop/dev/warp-ik/output/jacobian_fd/recording.usd
 ```
 
 run them all
 
 ```bash
-./scripts/docker.run.morph.sh x86-3090 template && \
-./scripts/docker.run.morph.sh x86-3090 jacobian_geom_3d && \
-./scripts/docker.run.morph.sh x86-3090 jacobian_geom_6d && \
-./scripts/docker.run.morph.sh x86-3090 jacobian_fd && \
-./scripts/docker.run.morph.sh x86-3090 jacobian_dls_6d && \
-./scripts/docker.run.morph.sh x86-3090 optim_adam_6d
+./scripts/run.morph.sh x86-3090 template && \
+./scripts/run.morph.sh x86-3090 jacobian_geom_3d && \
+./scripts/run.morph.sh x86-3090 jacobian_geom_6d && \
+./scripts/run.morph.sh x86-3090 jacobian_fd && \
+./scripts/run.morph.sh x86-3090 jacobian_dls_6d && \
+./scripts/run.morph.sh x86-3090 optim_adam_6d
 ```
 
 when logging in fresh to each node, set the environment variables:
@@ -68,5 +68,5 @@ export BACKEND="arm-rpi"
 test the backend
 
 ```bash
-git pull &&./scripts/docker.test.sh
+git pull && ./scripts/docker.test.sh
 ```
