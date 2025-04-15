@@ -34,8 +34,6 @@ class MutateConfig:
     prompts_dir: str = f"{root_dir}/warp_ik/prompts" # directory for the prompts
     output_dir: str = field(init=False) # directory for mutation outputs
     enabled_models: List[str] = field(default_factory=lambda: AIConfig().enabled_models) # Get defaults from AIConfig
-    proc_glaze_prompt: float = 0.5
-    proc_helpdocs_prompt: float = 0.1 # Keep this, but implementation still pending
 
     def __post_init__(self):
         if not self.root_dir:
@@ -131,16 +129,12 @@ async def mutate_async(config: MutateConfig, protomorph: ActiveMorph) -> List[Ac
 
     # --- Load Prompts ---
     mutation_prompt_filepath = os.path.join(config.prompts_dir, "mutate.txt")
-    glazing_prompt_filepath = os.path.join(config.prompts_dir, "glazing.txt")
     protomorph_filepath = os.path.join(config.morph_dir, f"{protomorph.name}.py")
 
     try:
         base_prompt_task = load_prompt_async(mutation_prompt_filepath)
-        glazing_prompt_task = load_prompt_async(glazing_prompt_filepath)
         morph_code_task = morph_to_prompt_async(protomorph_filepath)
-        base_prompt, glazing_prompt, morph_code = await asyncio.gather(
-            base_prompt_task, glazing_prompt_task, morph_code_task
-        )
+        base_prompt, morph_code = await asyncio.gather(base_prompt_task, morph_code_task)
     except Exception as e:
         log.error(f"Failed to load necessary files for mutation: {e}")
         return []
@@ -155,19 +149,6 @@ async def mutate_async(config: MutateConfig, protomorph: ActiveMorph) -> List[Ac
 
     # Replace placeholder in the mutation prompt
     final_prompt = final_prompt.replace("{{MORPH_CODE_PLACEHOLDER}}", morph_code)
-
-    if random.random() < config.proc_glaze_prompt:
-        log.info("\t🍯 Adding glazing prompt...")
-        final_prompt = f"{glazing_prompt}\n\n{final_prompt}" # Prepend glazing prompt
-
-    # TODO: Add helpdocs prompt section if random.random() < config.proc_helpdocs_prompt
-    if random.random() < config.proc_helpdocs_prompt:
-       log.info("\t📋 Adding documentation prompt... (Not yet implemented)")
-       # Example: Load docs and add:
-       # helpful_docs = await load_prompt_async(os.path.join(config.prompts_dir, "docs_example.txt"))
-       # final_prompt += f"\n\n<helpful_docs>\n{helpful_docs}\n</helpful_docs>"
-       pass
-
 
     # --- Save the final prompt used for this mutation ---
     final_prompt_filepath = os.path.join(config.output_dir, f"mutation_prompt_{protomorph.name}.txt")
