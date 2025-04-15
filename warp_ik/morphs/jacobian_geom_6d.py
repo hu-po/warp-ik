@@ -5,7 +5,7 @@ from warp_ik.src.morph import BaseMorph
 
 @wp.kernel
 def assign_jacobian_slice_kernel(
-    jacobians: wp.array(dtype=wp.float32),  # Shape: (num_envs, 6, dof)
+    jacobians: wp.array3d(dtype=wp.float32),  # Shape: (num_envs, 6, dof)
     q_grad: wp.array(dtype=wp.float32),     # Shape: (num_envs * dof)
     dim_idx: int,                           # Which dimension (0-5)
     num_envs: int,
@@ -19,7 +19,7 @@ def assign_jacobian_slice_kernel(
 
 @wp.kernel
 def jacobian_transpose_multiply_kernel(
-    jacobians: wp.array(dtype=wp.float32),  # Shape: (num_envs, 6, dof)
+    jacobians: wp.array3d(dtype=wp.float32),  # Shape: (num_envs, 6, dof)
     error: wp.array(dtype=wp.float32),      # Shape: (num_envs * 6)
     alpha: float,                           # Step size
     num_envs: int,
