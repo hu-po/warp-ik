@@ -37,7 +37,7 @@ class MorphConfig:
     seed: int = 42 # random seed
     device: str = None # nvidia device to run the simulation on
     headless: bool = False # turns off rendering
-    num_envs: int = 4 # number of parallel environments
+    num_envs: int = os.environ.get("NUM_ENVS", 2) # number of parallel environments
     num_rollouts: int = 2 # number of rollouts to perform
     train_iters: int = 64 # number of training iterations per rollout
     track: bool = False # turns on tracking with wandb
