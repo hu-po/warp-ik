@@ -1,7 +1,0 @@
-Carefully examine the following code. Identify and fix any issues, mistakes, bugs, or errors. Implement any potential improvements to the submission.
-
-This is an automated prompt as part of an agent workflow.
-The response may contain thinking and reasoning output, but only the code within the <edit> and <\edit> text indicators will be extracted and run.
-Do not alter essential functions, path setup, or dependencies necessary for the code to work.
-Remove any leading ```python or trailing ``` characters from the code. Ensure there are no markdown code block delimiters in the final result.
-Respond with fully runnable Python code, formatted as requested.
