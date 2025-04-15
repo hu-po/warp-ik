@@ -68,5 +68,5 @@ export BACKEND="arm-rpi"
 test the backend
 
 ```bash
-./scripts/docker.test.sh $BACKEND
+git pull &&./scripts/docker.test.sh
 ```
