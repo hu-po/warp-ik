@@ -27,17 +27,29 @@ local test
 uv run python src/test.py
 ```
 
-docker test, specify the compute backend `x86-3090`
+build and test the docker container for a specific compute backend `x86-3090`
 
 ```bash
 export BACKEND=x86-3090
 ./scripts/test.sh
-```   
+```
 
-run the `template` morph:
+test that ai (openai, anthropic, gemini, xai, replicate) is working:
 
 ```bash
-./scripts/run.morph.sh template
+./scripts/test.ai.sh
+```
+
+test that the morphs work:
+
+```bash
+./scripts/test.morph.sh
+```
+
+run a morph by name, e.g. `jacobian_geom_6d`:
+
+```bash
+./scripts/run.morph.sh jacobian_geom_6d
 ```
 
 start the evolutionary process using protomorphs `jacobian_geom_3d,jacobian_geom_6d`:
