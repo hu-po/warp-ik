@@ -1,7 +1,7 @@
 #!/bin/bash
 ROOT_DIR="$(dirname "$(dirname "$0")")" # the warp-ik directory
 MORPH=${1:-template}
-MODELS=${2:-gpt}
+MODELS=${2:-gpt,claude,gemini,xapi,replicate}
 if [ -z "${BACKEND}" ]; then
     echo "Error: BACKEND environment variable is not set"
     exit 1

@@ -4,6 +4,7 @@ import os
 import random
 import re
 import subprocess
+import sys
 import time
 import uuid
 import yaml
@@ -67,21 +68,40 @@ async def morph_to_prompt_async(morph_filepath: str) -> str:
         log.error(f"Error reading morph file {morph_filepath}: {e}")
         return ""
 
-async def reply_to_morph_async(reply: str, name: str, output_morph_dir: str) -> ActiveMorph | None:
+async def reply_to_morph_async(reply: str, name: str, output_morph_dir: str, debug_output_dir: str) -> ActiveMorph | None:
     """Asynchronously saves the AI's reply (code) to a new morph file."""
     # Basic check for API error messages or empty replies
     if not reply or "API error" in reply or "timed out" in reply:
         log.warning(f"Skipping saving morph {name} due to invalid reply: {reply[:100]}...")
         return None
 
-    # remove leading ```python and trailing trailing ```
-    # Also remove ``` appearing alone on a line
-    reply = re.sub(r'^```python\s*', '', reply, flags=re.MULTILINE)
-    reply = re.sub(r'\n```$', '', reply, flags=re.MULTILINE)
-    reply = re.sub(r'^```$', '', reply, flags=re.MULTILINE) # Remove ``` on its own line
+    # Save raw reply to debug directory
+    try:
+        os.makedirs(debug_output_dir, exist_ok=True)
+        raw_reply_path = os.path.join(debug_output_dir, f"{name}-reply_raw.txt")
+        async with aiofiles.open(raw_reply_path, "w", encoding="utf-8") as f:
+            await f.write(reply)
+        log.info(f"💾 Saved raw reply to {raw_reply_path}")
+    except Exception as e:
+        log.error(f"Failed to save raw reply for {name}: {e}")
+
+    # Process the reply
+    processed_reply = reply
+    processed_reply = re.sub(r'^```python\s*', '', processed_reply, flags=re.MULTILINE)
+    processed_reply = re.sub(r'\n```$', '', processed_reply, flags=re.MULTILINE)
+    processed_reply = re.sub(r'^```$', '', processed_reply, flags=re.MULTILINE)
+
+    # Save processed reply to debug directory
+    try:
+        processed_reply_path = os.path.join(debug_output_dir, f"{name}-reply_processed.txt")
+        async with aiofiles.open(processed_reply_path, "w", encoding="utf-8") as f:
+            await f.write(processed_reply)
+        log.info(f"💾 Saved processed reply to {processed_reply_path}")
+    except Exception as e:
+        log.error(f"Failed to save processed reply for {name}: {e}")
 
     # Basic sanity check: does it contain 'class Morph(BaseMorph):'?
-    if 'class Morph(BaseMorph):' not in reply:
+    if 'class Morph(BaseMorph):' not in processed_reply:
         log.warning(f"Skipping saving morph {name} - does not appear to contain valid Morph class structure.")
         return None
 
@@ -89,7 +109,7 @@ async def reply_to_morph_async(reply: str, name: str, output_morph_dir: str) -> 
     morph_filepath = os.path.join(output_morph_dir, f"{name}.py")
     try:
         async with aiofiles.open(morph_filepath, "w", encoding="utf-8") as f:
-            await f.write(reply)
+            await f.write(processed_reply)
         log.info(f"💾 Saved neomorph to {morph_filepath}")
         return morph
     except Exception as e:
@@ -182,7 +202,7 @@ async def mutate_async(config: MutateConfig, protomorph: ActiveMorph) -> List[Ac
             # Create a unique name, e.g., "gpt-a1b2c3"
             neomorph_name = f"{model_name}-{str(uuid.uuid4())[:6]}"
             # Create task to save the morph asynchronously
-            save_tasks.append(reply_to_morph_async(reply, neomorph_name, config.morph_dir))
+            save_tasks.append(reply_to_morph_async(reply, neomorph_name, config.morph_dir, config.output_dir))
         else:
             log.warning(f"❌ Failed or empty reply from {model_name}: {str(reply)[:100]}...")
 
@@ -206,9 +226,43 @@ async def main():
     args = parser.parse_args()
 
     if args.debug:
-        log.setLevel(logging.DEBUG)
-        logging.getLogger('ai').setLevel(logging.DEBUG)
+        # Get the root logger
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.DEBUG)  # Set root level
 
+        # Remove existing handlers (if any) added by basicConfig to avoid duplicates
+        for handler in root_logger.handlers[:]:
+            root_logger.removeHandler(handler)
+
+        # Create a stream handler to output to stderr (or stdout)
+        handler = logging.StreamHandler(sys.stderr)
+        handler.setLevel(logging.DEBUG)  # Ensure handler also processes debug messages
+
+        # Create a formatter and set it for the handler
+        formatter = logging.Formatter(
+            '%(asctime)s|%(name)s|%(levelname)s|%(message)s',
+            datefmt='%Y-%m-%d %H:%M:%S'
+        )
+        handler.setFormatter(formatter)
+
+        # Add the handler to the root logger
+        root_logger.addHandler(handler)
+
+        # Set levels for specific loggers if needed (optional now, root covers it)
+        log.setLevel(logging.DEBUG)  # 'mutate' logger
+        logging.getLogger('ai').setLevel(logging.DEBUG)  # 'ai' logger
+
+        # Add test messages
+        log.debug("DEBUG logging test message from 'mutate' logger.")
+        logging.getLogger('ai').debug("DEBUG logging test message from 'ai' logger.")
+        logging.debug("DEBUG logging test message from root logger.")  # Test root directly
+
+    else:
+        # Ensure default INFO level if not debugging
+        log.setLevel(logging.INFO)
+        logging.getLogger('ai').setLevel(logging.INFO)
+        # Consider if root logger needs setting back to INFO or if basicConfig handled it
+        logging.getLogger().setLevel(logging.INFO)
 
     enabled_models_list = args.models.split(",") if args.models else AIConfig().enabled_models
 

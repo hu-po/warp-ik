@@ -29,8 +29,8 @@ log = logging.getLogger(__name__)
 @dataclass
 class AIConfig:
     timeout_analysis: int = 600  # seconds
-    timeout_model_api: int = 30  # seconds
-    api_max_retries: int = 3
+    timeout_model_api: int = 300 # seconds
+    api_max_retries: int = 1
     max_tokens: int = int(1e4)
     enabled_models: List[str] = field(default_factory=lambda: ["gpt", "claude", "gemini", "xapi", "replicate"])
     # https://docs.anthropic.com/en/docs/about-claude/models/all-models
@@ -51,8 +51,8 @@ def async_retry_decorator(*, timeout: int, max_retries: int):
     def decorator(func):
         @retry(
             stop=stop_after_attempt(max_retries),
-            wait=wait_exponential(multiplier=1, min=4, max=10),
-            retry=retry_if_exception_type((TimeoutError, ConnectionError, OSError)),
+            wait=wait_exponential(multiplier=1, min=5, max=20),  # Increased min/max wait times
+            retry=retry_if_exception_type((TimeoutError, ConnectionError, OSError, asyncio.TimeoutError)),
             reraise=True,
         )
         @wraps(func)
@@ -70,14 +70,15 @@ def async_retry_decorator(*, timeout: int, max_retries: int):
                         if attempt >= max_retries:
                             raise
                         attempt += 1
-                        log.warning(f"{func.__name__} failed attempt {attempt-1}: {str(e)}")
+                        elapsed = (datetime.now() - start_time).total_seconds()
+                        log.warning(f"{func.__name__} attempt {attempt-1} failed after {elapsed:.2f}s: {type(e).__name__} - {str(e)}")
             except asyncio.TimeoutError as e:
                 elapsed = (datetime.now() - start_time).total_seconds()
-                log.error(f"{func.__name__} timed out after {elapsed:.2f}s on attempt {attempt}")
+                log.error(f"{func.__name__} timed out after {elapsed:.2f}s on attempt {attempt} (API timeout={timeout}s)")
                 raise TimeoutError(f"{func.__name__} timed out after {timeout} seconds")
             except Exception as e:
                 elapsed = (datetime.now() - start_time).total_seconds()
-                log.error(f"{func.__name__} failed after {elapsed:.2f}s on attempt {attempt}: {str(e)}")
+                log.error(f"{func.__name__} failed after {elapsed:.2f}s on attempt {attempt}: {type(e).__name__} - {str(e)}")
                 raise
         return wrapper
     return decorator
@@ -220,7 +221,7 @@ async def async_gemini(prompt: str, image_path: str = None) -> str:
 
         response = await model.generate_content_async(
             content,
-            request_options={"timeout": 600},
+            request_options={"timeout": 540},  # 9 minutes, less than timeout_analysis
             generation_config={"max_output_tokens": config.max_tokens},
         )
         response = response.text
@@ -288,9 +289,9 @@ async def async_inference(
             log.error("No AI APIs enabled")
             raise ValueError("No AI APIs enabled")
 
-        if not os.path.exists(image_path):
+        if image_path is not None and not os.path.exists(image_path):
             log.error(f"Image not found at {image_path}")
-            raise ValueError(f"Image not found at {image_path}")
+            return {"error": f"Image not found at {image_path}"}
 
         tasks = []
         ai_models = []
@@ -323,16 +324,23 @@ async def async_inference(
             else:
                 log.debug(f"{ai_model} success: {results[ai_model]}")
 
-        # Get base filename from image path and add analysis suffix
-        base_name = os.path.splitext(os.path.basename(image_path))[0]
-        directory = os.path.dirname(image_path)
-        json_path = os.path.join(directory, f"{base_name}-analysis.json")
-        try:
-            async with aiofiles.open(json_path, "w") as f:
-                await f.write(json.dumps(results, indent=2))
-            log.info(f"Saved JSON results to {json_path}")
-        except Exception as e:
-            log.error(f"Failed to save JSON results: {e}")
+        # Only save JSON results if image_path was provided
+        if image_path is not None:
+            try:
+                # Get base filename from image path and add analysis suffix with timestamp
+                base_name = os.path.splitext(os.path.basename(image_path))[0]
+                directory = os.path.dirname(image_path)
+                timestamp = datetime.now().strftime("%Y%m%d%H%M")
+                json_path = os.path.join(directory, f"{base_name}-analysis-{timestamp}.json")
+                
+                # Ensure results are JSON serializable
+                serializable_results = {k: str(v) if isinstance(v, Exception) else v for k, v in results.items()}
+                
+                async with aiofiles.open(json_path, "w") as f:
+                    await f.write(json.dumps(serializable_results, indent=2))
+                log.info(f"Saved JSON results to {json_path}")
+            except Exception as e:
+                log.error(f"Failed to save JSON results: {e}")
 
     except Exception as e:
         log.error(f"AI analysis error: {str(e)}", exc_info=True)
