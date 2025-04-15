@@ -8,6 +8,10 @@ import math
 import os
 import sys
 import time
+try:
+    import psutil
+except ImportError:
+    psutil = None
 import numpy as np
 try:
     import wandb
@@ -241,18 +245,47 @@ class BaseMorph:
 
         self.wandb_run = None
         if self.config.track:
-            wandb.login()
-            self.wandb_run = wandb.init(
-                entity=self.config.wandb_entity,
-                project=self.config.wandb_project,
-                name=f"{self.config.backend}/{self.config.morph}",
-                config=config_dict
-            )
-            self.wandb_run.save(config_filepath)
-            morph_code_path = os.path.join(self.config.morph_dir, f"{self.config.morph}.py")
-            if os.path.exists(morph_code_path):
-                    self.wandb_run.save(morph_code_path)
-            log.info(f"WandB tracking enabled for run: {self.wandb_run.name}")
+            if wandb is None:
+                log.error("WandB tracking enabled but wandb library not found. pip install wandb")
+                self.config.track = False # Disable tracking if library missing
+            else:
+                try:
+                    wandb.login()
+                    self.wandb_run = wandb.init(
+                        entity=self.config.wandb_entity,
+                        project=self.config.wandb_project,
+                        name=f"{self.config.backend}/{self.config.morph}",
+                        config=config_dict,
+                        # Explicitly enable system metrics monitoring
+                        settings=wandb.Settings(
+                            enable_system_metrics=True,
+                            _stats_sample_rate_seconds=2,
+                            _stats_samples_to_average=1
+                        )
+                    )
+                    # Update config with the *final* values used
+                    self.wandb_run.config.update({
+                        "num_envs": self.config.num_envs,
+                        "device": self.config.device,
+                        "backend": self.config.backend,
+                        "morph": self.config.morph
+                    }, allow_val_change=True)
+
+                    # Save config file artifact
+                    if os.path.exists(config_filepath):
+                        self.wandb_run.save(config_filepath)
+
+                    # Save morph code artifact
+                    morph_code_path = os.path.join(self.config.morph_dir, f"{self.config.morph}.py")
+                    if os.path.exists(morph_code_path):
+                        self.wandb_run.save(morph_code_path)
+                    log.info(f"WandB tracking enabled: {self.wandb_run.get_url()}")
+                except Exception as e:
+                    log.error(f"Failed to initialize WandB: {e}. Disabling tracking.")
+                    self.config.track = False
+                    if self.wandb_run:
+                        wandb.finish(exit_code=1)
+                        self.wandb_run = None
 
         self.rng = np.random.default_rng(self.config.seed)
         self.num_envs = self.config.num_envs
@@ -672,6 +705,8 @@ def run_morph(config: MorphConfig) -> dict:
         total_steps = config.num_rollouts * config.train_iters
         summary_results = {}
 
+        # Calculate average step time and throughput
+        avg_step_time_ms = 0.0
         for key, times in morph.profiler.items():
             if not times: continue # Skip empty timers
             avg_time_ms = np.mean(times)
@@ -682,49 +717,94 @@ def run_morph(config: MorphConfig) -> dict:
             summary_results[f"perf/{key}_std_ms"] = std_time_ms
             summary_results[f"perf/{key}_total_s"] = total_time_s
 
-            # Calculate steps/sec specifically for _step
-            if key == '_step' and avg_time_ms > 0:
-                steps_per_sec = (1000.0 / avg_time_ms) * morph.num_envs
-                log.info(f"    -> Approx. Steps/sec: {steps_per_sec:.2f} (env*steps/sec)")
-                summary_results["perf/steps_per_sec"] = steps_per_sec
+            # Store average _step time for throughput calculation
+            if key == '_step':
+                avg_step_time_ms = avg_time_ms
 
-        # Store final error metrics in results
-        # Use the last calculated errors before loop exit
-        results["final_pos_error_mean"] = np.mean(pos_err_mag)
-        results["final_pos_error_min"] = np.min(pos_err_mag)
-        results["final_pos_error_max"] = np.max(pos_err_mag)
-        results["final_ori_error_mean"] = np.mean(ori_err_mag)
-        results["final_ori_error_min"] = np.min(ori_err_mag)
-        results["final_ori_error_max"] = np.max(ori_err_mag)
+        # Calculate throughput metrics
+        if avg_step_time_ms > 0:
+            env_steps_per_sec = (1000.0 / avg_step_time_ms) * morph.num_envs
+            total_steps_per_sec = (1000.0 / avg_step_time_ms)
+            log.info(f"  Throughput:")
+            log.info(f"    -> Env*Steps/sec: {env_steps_per_sec:.2f}")
+            log.info(f"    -> Steps/sec: {total_steps_per_sec:.2f}")
+            summary_results["perf/env_steps_per_sec"] = env_steps_per_sec
+            summary_results["perf/steps_per_sec"] = total_steps_per_sec
+        else:
+            log.warning("Average step time is zero, cannot calculate throughput metrics")
+            summary_results["perf/env_steps_per_sec"] = 0.0
+            summary_results["perf/steps_per_sec"] = 0.0
 
-        # Update wandb summary
+        # Calculate accuracy score (higher is better)
+        try:
+            # Get the final error metrics
+            final_pos_error = np.mean(pos_err_mag)
+            final_ori_error = np.mean(ori_err_mag)
+            # Adding 1 to denominator prevents division by zero and keeps score positive
+            denominator = 1.0 + final_pos_error + final_ori_error
+            accuracy_score = 1.0 / denominator if denominator > 1e-6 else 0.0
+        except (NameError, ValueError) as e:
+            log.warning(f"Could not calculate accuracy score: {e}")
+            accuracy_score = 0.0
+
+        # Store final metrics in results
+        results.update({
+            "final_pos_error_mean": float(np.mean(pos_err_mag)),
+            "final_pos_error_min": float(np.min(pos_err_mag)),
+            "final_pos_error_max": float(np.max(pos_err_mag)),
+            "final_ori_error_mean": float(np.mean(ori_err_mag)),
+            "final_ori_error_min": float(np.min(ori_err_mag)),
+            "final_ori_error_max": float(np.max(ori_err_mag)),
+            "accuracy_score": float(accuracy_score),
+            # Add key config parameters
+            "config_num_envs": morph.config.num_envs,
+            "config_device": str(morph.config.device),
+            "config_backend": str(morph.config.backend),
+            "config_morph": str(morph.config.morph),
+            "total_steps": total_steps,
+            "total_env_steps": total_steps * morph.config.num_envs
+        })
+
+        # Update wandb summary with all metrics
         if morph.wandb_run:
-            morph.wandb_run.summary.update(summary_results)
-            morph.wandb_run.summary.update({
-                 "final/pos_error_mean": results["final_pos_error_mean"],
-                 "final/pos_error_min": results["final_pos_error_min"],
-                 "final/pos_error_max": results["final_pos_error_max"],
-                 "final/ori_error_mean": results["final_ori_error_mean"],
-                 "final/ori_error_min": results["final_ori_error_min"],
-                 "final/ori_error_max": results["final_ori_error_max"],
-            })
+            wandb_summary_data = {
+                "final/pos_error_mean": results["final_pos_error_mean"],
+                "final/pos_error_min": results["final_pos_error_min"],
+                "final/pos_error_max": results["final_pos_error_max"],
+                "final/ori_error_mean": results["final_ori_error_mean"],
+                "final/ori_error_min": results["final_ori_error_min"],
+                "final/ori_error_max": results["final_ori_error_max"],
+                "final/accuracy_score": results["accuracy_score"],
+                "final/total_steps": results["total_steps"],
+                "final/total_env_steps": results["total_env_steps"]
+            }
+            wandb_summary_data.update(summary_results)
+            morph.wandb_run.summary.update(wandb_summary_data)
 
         # Save results dictionary to file
         results_filepath = os.path.join(config.morph_output_dir, "results.json")
         try:
             with open(results_filepath, 'w') as f:
-                 # Combine summary stats with final errors for the json file
-                 results.update(summary_results)
-                 json.dump(results, f, indent=4)
+                # Convert numpy types to native python types for JSON serialization
+                serializable_results = {}
+                for k, v in results.items():
+                    if isinstance(v, (np.float32, np.float64)):
+                        serializable_results[k] = float(v)
+                    elif isinstance(v, (np.int32, np.int64)):
+                        serializable_results[k] = int(v)
+                    elif isinstance(v, np.ndarray):
+                        serializable_results[k] = v.tolist()
+                    else:
+                        serializable_results[k] = v
+                json.dump(serializable_results, f, indent=4)
             log.info(f"Results saved to {results_filepath}")
             # Save to wandb as artifact
             if morph.wandb_run:
-               results_artifact = wandb.Artifact(f"results_{morph.wandb_run.id}", type="results")
-               results_artifact.add_file(results_filepath)
-               morph.wandb_run.log_artifact(results_artifact)
-
+                results_artifact = wandb.Artifact(f"results_{morph.wandb_run.id}", type="results")
+                results_artifact.add_file(results_filepath)
+                morph.wandb_run.log_artifact(results_artifact)
         except Exception as e:
-             log.error(f"Failed to save results JSON: {e}")
+            log.error(f"Failed to save results JSON: {e}")
 
     except Exception as e:
         log.exception(f"Simulation loop failed: {e}")
