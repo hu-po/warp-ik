@@ -2,6 +2,7 @@
 import warp as wp
 import numpy as np
 import time # For potential debug timing
+import logging as log  # Add logging import
 
 from warp_ik.src.morph import BaseMorph
 
@@ -52,7 +53,7 @@ class Morph(BaseMorph):
         self.config.step_size = 1.0  # Step size (learning rate) for joint angle updates
         self.config.config_extras = {
             "lambda": 0.1,  # Damping factor lambda
-            "joint_q_requires_grad": True, # Gradients required for autodiff Jacobian
+            "joint_q_requires_grad": True,
         }
 
     def _step(self):
@@ -76,56 +77,51 @@ class Morph(BaseMorph):
         jacobians_wp = wp.zeros((self.num_envs, 6, self.dof), dtype=wp.float32, device=self.config.device)
         tape = wp.Tape()
 
+        # Explicitly ensure the array requires gradients before taping
+        if not self.model.joint_q.requires_grad:
+            log.warning("Force-setting requires_grad=True on joint_q before tape.")
+            self.model.joint_q.requires_grad = True
+
         # Record computation graph for the 6D EE error
         with tape:
             ee_error_wp = self.compute_ee_error() # Shape (num_envs * 6)
 
         # Compute Jacobian rows via backpropagation
-        # This part can be time-consuming due to repeated backward passes
-        # start_jacobian_time = time.time()
-        for o in range(6): # Iterate through 6 error dimensions
+        for o in range(6):
             select_gradient = np.zeros(6, dtype=np.float32)
             select_gradient[o] = 1.0
             e_grad_flat = wp.array(np.tile(select_gradient, self.num_envs), dtype=wp.float32, device=self.config.device)
+            
             tape.backward(grads={ee_error_wp: e_grad_flat})
-            q_grad_i = tape.gradients[self.model.joint_q] # Gradient for all joints, all envs
 
-            if q_grad_i: # Check if gradient exists
-                # Reshape the flat gradient array using the array's method
+            # Use the current self.model.joint_q as the key
+            try:
+                q_grad_i = tape.gradients[self.model.joint_q]
+            except KeyError:
+                log.error(f"KeyError accessing gradients for self.model.joint_q (dim {o}).")
+                log.error(f"joint_q requires_grad: {self.model.joint_q.requires_grad}")
+                log.error(f"Available gradient keys: {list(tape.gradients.keys())}")
+                q_grad_i = None
+
+            if q_grad_i:
                 q_grad_reshaped = q_grad_i.reshape((self.num_envs, self.dof))
-
-                # Launch the kernel to assign the reshaped gradient into the Jacobian slice
                 wp.launch(
                     kernel=assign_jacobian_slice_kernel,
-                    dim=self.num_envs * self.dof, # Launch one thread per element to copy
-                    inputs=[
-                        jacobians_wp,     # The target Jacobian array (output)
-                        q_grad_reshaped,  # The source gradient data
-                        o,                # The specific dimension (0-5) to write into
-                        self.dof          # Pass dof for index calculation
-                    ],
+                    dim=self.num_envs * self.dof,
+                    inputs=[jacobians_wp, q_grad_reshaped, o, self.dof],
                     device=self.config.device
-                    # jacobians_wp is modified in-place as it's passed as input/output
                 )
             else:
-                log.warning(f"Gradient computation returned None for dimension {o} in DLS step.")
-            
-            tape.zero()
-        # end_jacobian_time = time.time()
-        # print(f"Jacobian computation time: {end_jacobian_time - start_jacobian_time:.4f} s")
+                pass  # Jacobian column remains zero
 
+            tape.zero()
 
         # Get current error and Jacobian as NumPy arrays (GPU -> CPU transfer)
-        # start_transfer_time = time.time()
         jacobians_np = jacobians_wp.numpy() # Shape (num_envs, 6, dof)
         error_flat_np = self.compute_ee_error().numpy() # Recompute ensures consistency, Shape (num_envs*6)
         error_np = error_flat_np.reshape(self.num_envs, 6, 1) # Shape (num_envs, 6, 1)
-        # end_transfer_time = time.time()
-        # print(f"Data transfer time: {end_transfer_time - start_transfer_time:.4f} s")
-
 
         # --- Perform DLS update using NumPy ---
-        # start_numpy_time = time.time()
         delta_q_np = np.zeros((self.num_envs, self.dof, 1), dtype=np.float32)
         identity_6 = np.identity(6, dtype=np.float32)
 
@@ -153,8 +149,6 @@ class Morph(BaseMorph):
 
         # Scale by step size
         delta_q_np *= step_size
-        # end_numpy_time = time.time()
-        # print(f"NumPy computation time: {end_numpy_time - start_numpy_time:.4f} s")
 
         # Update joint angles (CPU -> GPU transfer)
         current_q = self.model.joint_q.numpy()

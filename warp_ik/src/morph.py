@@ -9,7 +9,10 @@ import os
 import sys
 import time
 import numpy as np
-
+try:
+    import wandb
+except ImportError:
+    wandb = None
 import warp as wp
 import warp.sim
 import warp.sim.render
@@ -21,7 +24,6 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 log.setLevel(logging.INFO)
-
 
 @dataclass
 class MorphConfig:
@@ -75,8 +77,6 @@ class MorphConfig:
         ((1.0, 0.0, 0.0), -math.pi * 0.5), # quarter turn about x-axis
         ((0.0, 0.0, 1.0), -math.pi * 0.5), # quarter turn about z-axis
     ]) # list of axis angle rotations for initial arm orientation offset
-    # Home position for the arm joints
-    # Format: [base, shoulder, elbow, wrist1, wrist2, wrist3, right_finger, left_finger]
     qpos_home: list[float] = field(default_factory=lambda: [
         0,          # base joint
         np.pi/12,   # shoulder joint
@@ -86,10 +86,7 @@ class MorphConfig:
         0,          # wrist 3 joint
         0,          # right finger joint
         0           # left finger joint
-    ])
-    
-    # Amount of random noise to add to the arm joint angles during initialization
-    # This helps with exploration and prevents getting stuck in local minima
+    ]) # home position for the arm joints
     q_angle_shuffle: list[float] = field(default_factory=lambda: [
         np.pi/2,    # base joint noise range
         np.pi/4,    # shoulder joint noise range
@@ -99,26 +96,22 @@ class MorphConfig:
         np.pi/4,    # wrist 3 joint noise range
         0.01,       # right finger joint noise range
         0.01        # left finger joint noise range
-    ])
+    ]) # amount of random noise to add to the arm joint angles during initialization
     config_extras: dict = field(default_factory=dict) # additional morph-specific config values
-    joint_q_requires_grad: bool = True # whether to require grad for the joint q
-    body_q_requires_grad: bool = True # whether to require grad for the body q
-    joint_attach_ke: float = 1600.0 # stiffness for the joint attach
-    joint_attach_kd: float = 20.0 # damping for the joint attach
-
+    body_q_requires_grad: bool = True # whether to require gradients for the body positions
+    joint_attach_ke: float = 1600.0 # stiffness of the joint attachment
+    joint_attach_kd: float = 20.0 # damping of the joint attachment
 
 class MorphState(Enum):
     NOT_RUN_YET = auto()
     ALREADY_RAN = auto()
     ERRORED_OUT = auto()
 
-
 @dataclass(order=True)
 class ActiveMorph:
     score: float
     name: str
     state: MorphState = MorphState.NOT_RUN_YET
-
 
 def quat_to_rot_matrix_np(q):
     x, y, z, w = q
@@ -129,7 +122,11 @@ def quat_to_rot_matrix_np(q):
     ], dtype=np.float32)
 
 def quat_from_axis_angle_np(axis, angle):
-    return np.concatenate([axis * np.sin(angle / 2), [np.cos(angle / 2)]])
+    axis_norm = np.linalg.norm(axis)
+    if axis_norm < 1e-6: return np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32) # Return identity if axis is zero
+    axis = axis / axis_norm
+    s = np.sin(angle / 2.0)
+    return np.array([axis[0] * s, axis[1] * s, axis[2] * s, np.cos(angle / 2.0)], dtype=np.float32)
 
 def apply_transform_np(translation, quat, point):
     R = quat_to_rot_matrix_np(quat)
@@ -145,13 +142,12 @@ def quat_mul_np(q1, q2):
         w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
     ], dtype=np.float32)
 
-def get_body_quaternions(state_body_q, num_links, ee_link_index):
-    num_envs = state_body_q.shape[0] // num_links
-    quats = np.empty((num_envs, 4), dtype=np.float32)
-    for e in range(num_envs):
-        t = state_body_q[e * num_links + ee_link_index]
-        quats[e, :] = t[3:7]
-    return quats
+def get_body_quaternions(state_body_q_np: np.ndarray, num_links: int, ee_link_index: int) -> np.ndarray:
+    """Extracts EE quaternions from the flattened body_q numpy array."""
+    num_envs = state_body_q_np.shape[0] // num_links
+    # Quaternions are elements 3, 4, 5, 6 (qx, qy, qz, qw)
+    ee_indices = np.arange(num_envs) * num_links + ee_link_index
+    return state_body_q_np[ee_indices, 3:7]
 
 @wp.func
 def quat_mul(q1: wp.quat, q2: wp.quat) -> wp.quat:
@@ -168,10 +164,15 @@ def quat_conjugate(q: wp.quat) -> wp.quat:
 
 @wp.func
 def quat_orientation_error(target: wp.quat, current: wp.quat) -> wp.vec3:
+    """Computes 3D orientation error vector from target and current quaternions."""
     q_err = quat_mul(target, quat_conjugate(current))
+    # Ensure scalar part is non-negative for consistency
+    qw = wp.select(q_err[3] < 0.0, -q_err[3], q_err[3])
     qx = wp.select(q_err[3] < 0.0, -q_err[0], q_err[0])
     qy = wp.select(q_err[3] < 0.0, -q_err[1], q_err[1])
     qz = wp.select(q_err[3] < 0.0, -q_err[2], q_err[2])
+    # Return axis * angle (scaled by 2), which is approx 2 * axis * sin(angle/2)
+    # Magnitude is related to the angle error
     return wp.vec3(qx, qy, qz) * 2.0
 
 
@@ -183,15 +184,24 @@ def compute_ee_error_kernel(
     ee_link_offset: wp.vec3,
     target_pos: wp.array(dtype=wp.vec3),
     target_ori: wp.array(dtype=wp.quat),
-    current_ori: wp.array(dtype=wp.quat),  # Precomputed current orientation
     error_out: wp.array(dtype=wp.float32)  # Flattened array (num_envs*6)
 ):
     tid = wp.tid()
-    t = body_q[tid * num_links + ee_link_index]
-    pos = wp.transform_point(t, ee_link_offset)
-    ori = current_ori[tid]
-    pos_err = target_pos[tid] - pos
-    ori_err = quat_orientation_error(target_ori[tid], ori)
+    # Get EE link transform [px,py,pz, qx,qy,qz,qw, scale]
+    t_flat = body_q[tid * num_links + ee_link_index]
+    t_pos = wp.vec3(t_flat[0], t_flat[1], t_flat[2])
+    t_ori = wp.quat(t_flat[3], t_flat[4], t_flat[5], t_flat[6])
+
+    # Calculate current EE tip position
+    current_pos = wp.transform_point(wp.transform(t_pos, t_ori), ee_link_offset)
+    # Current EE orientation is just t_ori
+    current_ori = t_ori
+
+    # Calculate errors
+    pos_err = target_pos[tid] - current_pos
+    ori_err = quat_orientation_error(target_ori[tid], current_ori)
+
+    # Write to output array
     base = tid * 6
     error_out[base + 0] = pos_err.x
     error_out[base + 1] = pos_err.y
@@ -211,25 +221,38 @@ class BaseMorph:
         self.config = config
         self._update_config()
         log.debug(f"config:{json.dumps(self.config.__dict__, indent=4)}")
-        
+
         self.config.morph_output_dir = os.path.join(self.config.output_dir, self.config.morph)
         os.makedirs(config.morph_output_dir, exist_ok=True)
         log.debug(f"morph specific output_dir: {config.morph_output_dir}")
 
         config_filepath = os.path.join(config.morph_output_dir, "config.json")
         with open(config_filepath, 'w') as f:
-            json.dump(self.config.__dict__, f, indent=4)
+            # Convert fields that might not be JSON serializable (like numpy arrays in defaults)
+            config_dict = {}
+            for key, value in self.config.__dict__.items():
+                if isinstance(value, np.ndarray):
+                    config_dict[key] = value.tolist() # Convert numpy arrays to lists
+                elif isinstance(value, (wp.vec3, wp.quat, wp.transform)):
+                     config_dict[key] = list(value) # Convert warp types if needed
+                else:
+                    config_dict[key] = value
+            json.dump(config_dict, f, indent=4)
 
+        self.wandb_run = None
         if self.config.track:
-            import wandb
             wandb.login()
-            wandb.init(
+            self.wandb_run = wandb.init(
                 entity=self.config.wandb_entity,
                 project=self.config.wandb_project,
-                name=f"{self.config.dockerfile}/{self.config.morph}/seed{self.config.seed}",
-                config=self.config.__dict__
+                name=f"{self.config.dockerfile}/{self.config.morph}",
+                config=config_dict
             )
-            wandb.save(config_filepath)
+            self.wandb_run.save(config_filepath)
+            morph_code_path = os.path.join(self.config.morph_dir, f"{self.config.morph}.py")
+            if os.path.exists(morph_code_path):
+                    self.wandb_run.save(morph_code_path)
+            log.info(f"WandB tracking enabled for run: {self.wandb_run.name}")
 
         self.rng = np.random.default_rng(self.config.seed)
         self.num_envs = self.config.num_envs
@@ -246,323 +269,477 @@ class BaseMorph:
             floating=False
         )
         builder = wp.sim.ModelBuilder()
-        self.step_size = self.config.step_size
         self.num_links = len(articulation_builder.joint_type)
         self.dof = len(articulation_builder.joint_q)
-        self.joint_limits = self.config.joint_limits
-
+        self.joint_limits = np.array(self.config.joint_limits, dtype=np.float32)
         log.info(f"Parsed URDF with {self.num_links} links and {self.dof} dof")
 
         # Locate ee_gripper link.
         self.ee_link_offset = wp.vec3(self.config.ee_link_offset)
         self.ee_link_index = -1
-        for i, joint in enumerate(articulation_builder.joint_name):
-            if joint == "ee_gripper":
-                self.ee_link_index = articulation_builder.joint_child[i]
-                break
+        for i, name in enumerate(articulation_builder.body_name): # Iterate through bodies to find link index
+             # The joint child gives the *joint* index, not the *body* index directly connected.
+             # We need the index of the body specified as the joint's child.
+             # Let's find the body name associated with the joint child index.
+             # This seems overly complex, let's assume the joint name convention is reliable for now.
+             # TODO: Verify robust EE link index finding if URDFs change structure
+             if name == "ee_gripper_link": # Assuming the link name matches the convention often used with joints
+                 self.ee_link_index = i
+                 break
+             # Fallback using joint info (less direct)
+             # joint_idx = -1
+             # for j_idx, j_name in enumerate(articulation_builder.joint_name):
+             #     if j_name == "ee_gripper": # Find the joint named 'ee_gripper'
+             #         joint_idx = j_idx
+             #         break
+             # if joint_idx != -1:
+             #      self.ee_link_index = articulation_builder.joint_child[joint_idx] # This is the child *joint* index, need body
+                 # Need mapping from joint child index to body index...
+
         if self.ee_link_index == -1:
-            raise ValueError("Could not find ee_gripper joint in URDF")
+             # Let's try finding the joint first and getting its child body index
+             found_joint_idx = -1
+             for j_idx, j_name in enumerate(articulation_builder.joint_name):
+                  if j_name == "ee_gripper":
+                       found_joint_idx = j_idx
+                       break
+             if found_joint_idx != -1:
+                  # joint_child gives the index of the child *link/body*
+                  self.ee_link_index = articulation_builder.joint_child[found_joint_idx]
+                  log.info(f"Found ee_gripper joint, using child link index: {self.ee_link_index} (Name: {articulation_builder.body_name[self.ee_link_index]})")
+             else:
+                  raise ValueError("Could not find ee_gripper joint or link in URDF")
+
 
         # Compute initial arm orientation.
-        _initial_arm_orientation = None
+        _initial_arm_orientation_np = np.array([0.,0.,0.,1.], dtype=np.float32) # Start with identity
         for axis, angle in self.config.arm_rot_offset:
-            if _initial_arm_orientation is None:
-                _initial_arm_orientation = wp.quat_from_axis_angle(wp.vec3(axis), angle)
-            else:
-                _initial_arm_orientation *= wp.quat_from_axis_angle(wp.vec3(axis), angle)
-        self.initial_arm_orientation = _initial_arm_orientation
-        log.debug(f"Initial arm orientation: {[self.initial_arm_orientation.x, self.initial_arm_orientation.y, self.initial_arm_orientation.z, self.initial_arm_orientation.w]}")
+            rot_quat_np = quat_from_axis_angle_np(np.array(axis), angle)
+            _initial_arm_orientation_np = quat_mul_np(rot_quat_np, _initial_arm_orientation_np) # Apply rotation
+        self.initial_arm_orientation = wp.quat(_initial_arm_orientation_np) # Store as Warp quat
+        log.debug(f"Initial arm orientation: {list(self.initial_arm_orientation)}")
 
-        # --- Revised target origin computation ---
-        # Instead of using a raw grid, we compute each arm's target relative to its base transform.
+
+        # --- Target origin computation and initial joint angles ---
         self.target_origin = []
         self.arm_spacing_xz = self.config.arm_spacing_xz
         self.arm_height = self.config.arm_height
-        self.num_rows = int(math.sqrt(self.num_envs))
-        log.info(f"Spawning {self.num_envs} arms in a grid of {self.num_rows}x{self.num_rows}")
+        self.num_rows = int(math.sqrt(self.num_envs)) if self.num_envs > 0 else 0
+        if self.num_rows * self.num_rows != self.num_envs:
+             log.warning(f"num_envs ({self.num_envs}) is not a perfect square. Grid layout might be uneven.")
+             self.num_rows = int(np.ceil(math.sqrt(self.num_envs))) # Adjust for layout
+
+        log.info(f"Spawning {self.num_envs} arms in a grid approximating {self.num_rows}x{self.num_rows}")
+
+        initial_joint_q = [] # Store initial joint angles for all envs
+
         for e in range(self.num_envs):
-            x = (e % self.num_rows) * self.arm_spacing_xz
-            z = (e // self.num_rows) * self.arm_spacing_xz
-            base_transform = wp.transform(wp.vec3(x, self.arm_height, z), self.initial_arm_orientation)
-            # Convert base transform to numpy (for target computation).
+            row = e // self.num_rows
+            col = e % self.num_rows
+            x = col * self.arm_spacing_xz
+            z = row * self.arm_spacing_xz
             base_translation = np.array([x, self.arm_height, z], dtype=np.float32)
-            base_quat = np.array([self.initial_arm_orientation.x, self.initial_arm_orientation.y,
-                                   self.initial_arm_orientation.z, self.initial_arm_orientation.w], dtype=np.float32)
+            base_quat = _initial_arm_orientation_np # Use the final computed numpy orientation
+
             # Define the target offset in robot coordinates and transform to world
             target_offset_local = np.array(self.config.target_offset, dtype=np.float32)
             target_world = apply_transform_np(base_translation, base_quat, target_offset_local)
             self.target_origin.append(target_world)
+
+            # Add arm instance to the main builder
             builder.add_builder(articulation_builder, xform=wp.transform(wp.vec3(x, self.arm_height, z), self.initial_arm_orientation))
+
+            # Set initial joint angles for this environment
+            env_joint_q = []
             num_joints_in_arm = len(self.config.qpos_home)
-            for i in range(num_joints_in_arm):
+            if num_joints_in_arm != self.dof:
+                 log.warning(f"Mismatch: len(qpos_home)={num_joints_in_arm} != dof={self.dof}. Check config.")
+                 # Adjust loop range defensively
+                 num_joints_to_set = min(num_joints_in_arm, self.dof, len(self.config.q_angle_shuffle), len(self.joint_limits))
+            else:
+                 num_joints_to_set = self.dof
+
+            for i in range(num_joints_to_set):
                 value = self.config.qpos_home[i] + self.rng.uniform(-self.config.q_angle_shuffle[i], self.config.q_angle_shuffle[i])
-                builder.joint_q[-num_joints_in_arm + i] = np.clip(value, self.config.joint_limits[i][0], self.config.joint_limits[i][1])
+                # Clip value based on joint limits before adding
+                clipped_value = np.clip(value, self.joint_limits[i, 0], self.joint_limits[i, 1])
+                env_joint_q.append(clipped_value)
+
+            # Handle potential DOF mismatch if warning occurred
+            if len(env_joint_q) < self.dof:
+                 env_joint_q.extend([0.0] * (self.dof - len(env_joint_q))) # Pad with zeros
+
+            initial_joint_q.extend(env_joint_q)
+
         self.target_origin = np.array(self.target_origin)
-        # Target orientation: default identity.
-        self.target_ori = np.tile(np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32), (self.num_envs, 1))
+        # Initial target orientation (identity relative to base)
+        self.target_ori = np.tile(_initial_arm_orientation_np, (self.num_envs, 1))
         log.debug(f"Initial target orientations (first env): {self.target_ori[0]}")
 
         # Finalize model.
-        self.model = builder.finalize()
+        self.model = builder.finalize(device=self.config.device) # Specify device
         self.model.ground = False
-        self.model.joint_q.requires_grad = self.config.joint_q_requires_grad
+        self.model.joint_q.assign(wp.array(initial_joint_q, dtype=wp.float32, device=self.config.device))
         self.model.body_q.requires_grad = self.config.body_q_requires_grad
         self.model.joint_attach_ke = self.config.joint_attach_ke
         self.model.joint_attach_kd = self.config.joint_attach_kd
+
         self.integrator = wp.sim.SemiImplicitIntegrator()
+
+        # --- Renderer Setup ---
+        self.renderer = None
         if not self.config.headless:
-            self.usd_output_path = os.path.join(self.config.morph_output_dir, "recording.usd")
-            self.renderer = wp.sim.render.SimRenderer(self.model, os.path.expanduser(self.usd_output_path))
-        else:
-            self.renderer = None
+             try:
+                 self.usd_output_path = os.path.join(self.config.morph_output_dir, "recording.usd")
+                 self.renderer = wp.sim.render.SimRenderer(self.model, self.usd_output_path)
+                 log.info(f"Initialized renderer, outputting to {self.usd_output_path}")
+                 # Log USD path to wandb if tracking
+                 if self.wandb_run:
+                     self.wandb_run.summary['usd_output_path'] = self.usd_output_path
+             except Exception as e:
+                 log.error(f"Failed to initialize renderer: {e}. Running headless.")
+                 self.config.headless = True # Force headless if renderer fails
+        # --- End Renderer Setup ---
 
-        # Simulation state.
-        self.ee_pos = wp.zeros(self.num_envs, dtype=wp.vec3, requires_grad=True)
-        self.ee_error = wp.zeros(self.num_envs * 6, dtype=wp.float32, requires_grad=True)
-        self.state = self.model.state(requires_grad=True)
-        self.targets = self.target_origin.copy()
+        # --- Simulation State ---
+        # ee_pos is mainly used by jacobian_geom_3d, maybe initialize there?
+        # For now, keep it here for potential broader use.
+        self.ee_pos = wp.zeros(self.num_envs, dtype=wp.vec3, requires_grad=True, device=self.config.device)
+        # ee_error stores the flattened 6D error [err_px, py, pz, ox, oy, oz] * num_envs
+        self.ee_error = wp.zeros(self.num_envs * 6, dtype=wp.float32, requires_grad=True, device=self.config.device)
+        # Get initial state from model
+        self.state = self.model.state(requires_grad=True) # Get state AFTER setting initial joint_q
+        # Target positions (world frame)
+        self.targets = self.target_origin.copy() # Current target positions for each env
+        # Profiler dictionary
         self.profiler = {}
+        # --- End Simulation State ---
 
-    def compute_ee_error(self):
-        with wp.ScopedTimer("forward_kinematics", print=False, active=True, dict=self.profiler):
+
+    def compute_ee_error(self) -> wp.array:
+        """Computes the 6D end-effector error and returns the flattened Warp array."""
+        with wp.ScopedTimer("eval_fk", print=False, active=True, dict=self.profiler, color="blue"):
             wp.sim.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, None, self.state)
-            host_quats = get_body_quaternions(self.state.body_q.numpy(), self.num_links, self.ee_link_index)
-            device_quats = wp.array(host_quats, dtype=wp.quat)
-        
-        with wp.ScopedTimer("error_compute", print=False, active=True, dict=self.profiler):
+            # Note: self.state is updated in-place by eval_fk
+        with wp.ScopedTimer("error_kernel", print=False, active=True, dict=self.profiler, color="green"):
+            # Ensure target arrays are on the correct device
+            targets_pos_wp = wp.array(self.targets, dtype=wp.vec3, device=self.config.device)
+            targets_ori_wp = wp.array(self.target_ori, dtype=wp.quat, device=self.config.device)
             wp.launch(
                 compute_ee_error_kernel,
                 dim=self.num_envs,
                 inputs=[
-                    self.state.body_q,
+                    self.state.body_q, # body_q is updated by eval_fk
                     self.num_links,
                     self.ee_link_index,
                     self.ee_link_offset,
-                    wp.array(self.targets, dtype=wp.vec3),
-                    wp.array(self.target_ori, dtype=wp.quat),
-                    device_quats,
+                    targets_pos_wp,
+                    targets_ori_wp,
+                    # Removed precomputed current_ori
                 ],
-                outputs=[self.ee_error],
+                outputs=[self.ee_error], # ee_error is updated in-place
+                device=self.config.device
             )
-            error_np = self.ee_error.numpy()
-            log.debug(f"EE error (env 0): Pos [{error_np[0]:.4f}, {error_np[1]:.4f}, {error_np[2]:.4f}], Ori [{error_np[3]:.4f}, {error_np[4]:.4f}, {error_np[5]:.4f}]")
-        return self.ee_error
+        return self.ee_error # Return the updated Warp array
+
 
     def _step(self):
-        raise NotImplementedError("Morphs must implement their own step function")
+        """Placeholder for the morph-specific IK update logic."""
+        raise NotImplementedError("Morphs must implement their own _step function")
+
 
     def step(self):
-        ee_error_flat = self.compute_ee_error().numpy()
-        error = ee_error_flat.reshape(self.num_envs, 6, 1)
-        with wp.ScopedTimer("_step", print=False, active=True, dict=self.profiler):
-            self._step()
+        """
+        Performs one simulation step, including error calculation and the morph-specific update.
+        Also handles profiling of the morph's _step implementation.
+        """
+        # Profile the morph-specific implementation
+        with wp.ScopedTimer("_step", print=False, active=True, dict=self.profiler, color="red"):
+            self._step() # Execute the morph's core logic
+        # Clipping joint angles after the step to respect limits
+        current_q = self.model.joint_q.numpy()
+        clipped_q = np.clip(current_q, self.joint_limits[:, 0], self.joint_limits[:, 1])
+        self.model.joint_q.assign(wp.array(clipped_q, dtype=wp.float32, device=self.config.device))
 
+
+    # --- render_gizmos and render_error_bars remain the same ---
     def render_gizmos(self):
         if self.renderer is None:
             return
-
         # Ensure FK is up-to-date for rendering the current state
-        # This might be redundant if called right after step(), but safe to include.
-        # wp.sim.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, None, self.state)
+        wp.sim.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, None, self.state)
 
         radius = self.config.gizmo_radius
-        # Warp cones are defined by height along Y axis, so half_height is used for centering later
         cone_height = self.config.gizmo_length
         cone_half_height = cone_height / 2.0
 
-        # --- Define Base Rotations for Gizmo Axes ---
-        # We want the cone's length (local Y) to align with the world X, Y, or Z axis.
-        # render_cone uses local Y as the height axis.
-        # Rotate cone's Y axis to align with world X: Rotate +90 deg around Z
         rot_x_axis = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), math.pi / 2.0)
-        # Rotate cone's Y axis to align with world Y: Identity (no rotation needed)
         rot_y_axis = wp.quat_identity()
-        # Rotate cone's Y axis to align with world Z: Rotate -90 deg around X
         rot_z_axis = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), -math.pi / 2.0)
 
-        # Convert base rotations to numpy [x,y,z,w] format
-        rot_x_np = np.array([rot_x_axis.x, rot_x_axis.y, rot_x_axis.z, rot_x_axis.w], dtype=np.float32)
-        rot_y_np = np.array([rot_y_axis.x, rot_y_axis.y, rot_y_axis.z, rot_y_axis.w], dtype=np.float32)
-        rot_z_np = np.array([rot_z_axis.x, rot_z_axis.y, rot_z_axis.z, rot_z_axis.w], dtype=np.float32)
+        rot_x_np = np.array(list(rot_x_axis), dtype=np.float32)
+        rot_y_np = np.array(list(rot_y_axis), dtype=np.float32)
+        rot_z_np = np.array(list(rot_z_axis), dtype=np.float32)
 
-        # Get current body transforms (needed for EE pose)
-        # Ensure the data is on the host for processing
-        current_body_q = self.state.body_q.numpy() # shape: (num_envs * num_links, 8) [px,py,pz, qx,qy,qz,qw, scale=1]
+        current_body_q = self.state.body_q.numpy()
 
         for e in range(self.num_envs):
             # --- Target Gizmos ---
             target_pos_np = self.targets[e]
-            target_ori_np = self.target_ori[e] # Shape [x,y,z,w]
-            log.debug(f"Env {e} - Target pos: {target_pos_np}, Target ori: {target_ori_np}")
+            target_ori_np = self.target_ori[e]
 
-            # Calculate final orientation for each target axis gizmo
             target_rot_x_np = quat_mul_np(target_ori_np, rot_x_np)
             target_rot_y_np = quat_mul_np(target_ori_np, rot_y_np)
             target_rot_z_np = quat_mul_np(target_ori_np, rot_z_np)
-            log.debug(f"Env {e} - Target gizmo orientations - X: {target_rot_x_np}, Y: {target_rot_y_np}, Z: {target_rot_z_np}")
 
-            # Calculate position offset for cone base (tip is at origin before transform)
-            # We want the *center* of the gizmo line at the target position.
-            # Transform the offset vector (0, cone_half_height, 0) by the gizmo's rotation
-            # and subtract it from the target position.
             offset_x = apply_transform_np(np.zeros(3), target_rot_x_np, np.array([0, cone_half_height, 0]))
             offset_y = apply_transform_np(np.zeros(3), target_rot_y_np, np.array([0, cone_half_height, 0]))
             offset_z = apply_transform_np(np.zeros(3), target_rot_z_np, np.array([0, cone_half_height, 0]))
 
-            # Render target cones
-            self.renderer.render_cone(
-                name=f"target_x_{e}",
-                pos=tuple(target_pos_np - offset_x),
-                rot=tuple(target_rot_x_np),
-                radius=radius,
-                half_height=cone_half_height,
-                color=self.config.gizmo_color_x_target
-            )
-            self.renderer.render_cone(
-                name=f"target_y_{e}",
-                pos=tuple(target_pos_np - offset_y),
-                rot=tuple(target_rot_y_np),
-                radius=radius,
-                half_height=cone_half_height,
-                color=self.config.gizmo_color_y_target
-            )
-            self.renderer.render_cone(
-                name=f"target_z_{e}",
-                pos=tuple(target_pos_np - offset_z),
-                rot=tuple(target_rot_z_np),
-                radius=radius,
-                half_height=cone_half_height,
-                color=self.config.gizmo_color_z_target
-            )
+            self.renderer.render_cone(name=f"target_x_{e}", pos=tuple(target_pos_np - offset_x), rot=tuple(target_rot_x_np), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_x_target)
+            self.renderer.render_cone(name=f"target_y_{e}", pos=tuple(target_pos_np - offset_y), rot=tuple(target_rot_y_np), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_y_target)
+            self.renderer.render_cone(name=f"target_z_{e}", pos=tuple(target_pos_np - offset_z), rot=tuple(target_rot_z_np), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_z_target)
 
             # --- End-Effector Gizmos ---
-            # Get the transform of the EE link for the current environment
+            if e * self.num_links + self.ee_link_index >= len(current_body_q):
+                 log.error(f"Index out of bounds accessing current_body_q for env {e}. Skipping EE gizmo.")
+                 continue # Skip this environment's EE gizmo if index is invalid
+
             ee_link_transform_flat = current_body_q[e * self.num_links + self.ee_link_index]
             ee_link_pos_np = ee_link_transform_flat[0:3]
-            ee_link_ori_np = ee_link_transform_flat[3:7] # Shape [x,y,z,w]
-            log.debug(f"Env {e} - EE tip pos: {ee_link_pos_np}, EE ori: {ee_link_ori_np}")
+            ee_link_ori_np = ee_link_transform_flat[3:7]
+            ee_tip_pos_np = apply_transform_np(ee_link_pos_np, ee_link_ori_np, np.array(self.config.ee_link_offset)) # Use numpy offset
 
-            # Calculate the world position of the EE tip (applying offset)
-            ee_tip_pos_np = apply_transform_np(ee_link_pos_np, ee_link_ori_np, self.ee_link_offset)
-
-            # Calculate final orientation for each EE axis gizmo
             ee_rot_x_np = quat_mul_np(ee_link_ori_np, rot_x_np)
             ee_rot_y_np = quat_mul_np(ee_link_ori_np, rot_y_np)
             ee_rot_z_np = quat_mul_np(ee_link_ori_np, rot_z_np)
-            log.debug(f"Env {e} - EE gizmo orientations - X: {ee_rot_x_np}, Y: {ee_rot_y_np}, Z: {ee_rot_z_np}")
 
-            # Calculate position offset for cone base
             ee_offset_x = apply_transform_np(np.zeros(3), ee_rot_x_np, np.array([0, cone_half_height, 0]))
             ee_offset_y = apply_transform_np(np.zeros(3), ee_rot_y_np, np.array([0, cone_half_height, 0]))
             ee_offset_z = apply_transform_np(np.zeros(3), ee_rot_z_np, np.array([0, cone_half_height, 0]))
 
-
-            # Render EE cones
-            self.renderer.render_cone(
-                name=f"ee_pos_x_{e}",
-                pos=tuple(ee_tip_pos_np - ee_offset_x), # Use tip position
-                rot=tuple(ee_rot_x_np),             # Use calculated EE axis orientation
-                radius=radius,
-                half_height=cone_half_height,
-                color=self.config.gizmo_color_x_ee
-            )
-            self.renderer.render_cone(
-                name=f"ee_pos_y_{e}",
-                pos=tuple(ee_tip_pos_np - ee_offset_y),
-                rot=tuple(ee_rot_y_np),
-                radius=radius,
-                half_height=cone_half_height,
-                color=self.config.gizmo_color_y_ee
-            )
-            self.renderer.render_cone(
-                name=f"ee_pos_z_{e}",
-                pos=tuple(ee_tip_pos_np - ee_offset_z),
-                rot=tuple(ee_rot_z_np),
-                radius=radius,
-                half_height=cone_half_height,
-                color=self.config.gizmo_color_z_ee
-            )
+            self.renderer.render_cone(name=f"ee_pos_x_{e}", pos=tuple(ee_tip_pos_np - ee_offset_x), rot=tuple(ee_rot_x_np), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_x_ee)
+            self.renderer.render_cone(name=f"ee_pos_y_{e}", pos=tuple(ee_tip_pos_np - ee_offset_y), rot=tuple(ee_rot_y_np), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_y_ee)
+            self.renderer.render_cone(name=f"ee_pos_z_{e}", pos=tuple(ee_tip_pos_np - ee_offset_z), rot=tuple(ee_rot_z_np), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_z_ee)
 
     def render_error_bars(self):
-        # TODO: render error bars on top of each robot for visualization
+        # TODO: implement error bar rendering if desired
         pass
 
     def render(self):
         if self.renderer is None:
             return
-        with wp.ScopedTimer("render", print=False, active=True, dict=self.profiler):
+        # Timer for rendering
+        with wp.ScopedTimer("render", print=False, active=True, dict=self.profiler, color="purple"):
             self.renderer.begin_frame(self.render_time)
+            # State should be up-to-date from FK calls before rendering
             self.renderer.render(self.state)
             self.render_gizmos()
             self.render_error_bars()
             self.renderer.end_frame()
-            self.render_time += self.frame_dt
+        self.render_time += self.frame_dt # Increment render time *after* frame
+
 
 def run_morph(config: MorphConfig) -> dict:
+    """Runs the simulation for a given morph configuration."""
     morph_path = os.path.join(config.morph_dir, f"{config.morph}.py")
-    log.info(f"running morph {config.morph} from {morph_path}")
-    spec = importlib.util.spec_from_file_location(f"morphs.{config.morph}", morph_path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    MorphClass = module.Morph
-    morph = MorphClass(config)
-    # copy the morph python file to output directory
-    morph_output_filepath = os.path.join(config.morph_output_dir, "morph.py")
-    with open(morph_output_filepath, 'w') as f:
-        f.write(module.__str__())
-    wp.init()
-    log.info(f"gpu enabled: {wp.get_device().is_cuda}")
-    log.info("starting simulation")
-    results = {}
-    with wp.ScopedDevice(config.device):
-        for i in range(config.num_rollouts):
-            with wp.ScopedTimer("target_update", print=False, active=True, dict=morph.profiler):
-                morph.targets = morph.target_origin.copy()
-                morph.targets[:, :] += morph.rng.uniform(
-                    -config.target_spawn_pos_noise / 2,
-                    config.target_spawn_pos_noise / 2,
-                    size=(morph.num_envs, 3)
-                )
-                random_axes = morph.rng.uniform(-1, 1, size=(morph.num_envs, 3))
-                random_angles = morph.rng.uniform(-config.target_spawn_rot_noise, 
-                                              config.target_spawn_rot_noise, 
-                                              size=(morph.num_envs,))
-                target_orientations = np.empty((morph.num_envs, 4), dtype=np.float32)
-                for e in range(morph.num_envs):
-                    base_quat = np.array([morph.initial_arm_orientation.x,
-                                        morph.initial_arm_orientation.y,
-                                        morph.initial_arm_orientation.z,
-                                        morph.initial_arm_orientation.w], dtype=np.float32)
-                    random_rot = quat_from_axis_angle_np(random_axes[e], random_angles[e])
-                    target_orientations[e] = quat_mul_np(base_quat, random_rot)
-                morph.target_ori = target_orientations
-                log.debug(f"Updated target orientation (env 0, rollout {i}): {morph.target_ori[0]}")
+    log.info(f"Running morph {config.morph} from {morph_path}")
 
-            for j in range(config.train_iters):
-                morph.step()
-                morph.render()
-                log.debug(f"rollout {i}, iter: {j}, error: {morph.compute_ee_error().numpy().mean()}")
+    try:
+        # Dynamically import the specified morph class
+        spec = importlib.util.spec_from_file_location(f"morphs.{config.morph}", morph_path)
+        if spec is None:
+            raise ImportError(f"Could not find spec for morph: {config.morph} at {morph_path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[f"morphs.{config.morph}"] = module # Add to sys.modules for potential relative imports within morph
+        spec.loader.exec_module(module)
+        MorphClass = module.Morph
+    except Exception as e:
+        log.exception(f"Failed to load morph '{config.morph}': {e}")
+        return {"error": f"Failed to load morph: {e}"}
 
+    # Initialize Warp
+    try:
+        wp.init()
+    except Exception as e:
+        log.exception(f"Failed to initialize Warp: {e}")
+        return {"error": f"Warp initialization failed: {e}"}
+
+    log.info(f"Warp device: {wp.get_device().name} (CUDA: {wp.get_device().is_cuda})")
+
+    # Instantiate the morph (handles WandB init inside)
+    try:
+        morph = MorphClass(config)
+    except Exception as e:
+        log.exception(f"Failed to initialize morph '{config.morph}': {e}")
+        # Clean up wandb run if init failed after wandb.init
+        if config.track and wandb and wandb.run:
+            wandb.finish(exit_code=1)
+        return {"error": f"Morph initialization failed: {e}"}
+
+
+    # --- Simulation Loop ---
+    log.info("Starting simulation loop...")
+    results = {} # To store final results
+    global_step = 0
+
+    try:
+        with wp.ScopedDevice(config.device):
+            for i in range(config.num_rollouts):
+                log.info(f"--- Starting Rollout {i+1}/{config.num_rollouts} ---")
+
+                # --- Update Targets for New Rollout ---
+                with wp.ScopedTimer("target_update", print=False, active=True, dict=morph.profiler):
+                    morph.targets = morph.target_origin.copy()
+                    # Add positional noise
+                    pos_noise = morph.rng.uniform(-config.target_spawn_pos_noise / 2, config.target_spawn_pos_noise / 2, size=(morph.num_envs, 3))
+                    morph.targets += pos_noise
+
+                    # Add rotational noise
+                    target_orientations = np.empty((morph.num_envs, 4), dtype=np.float32)
+                    base_quat_np = np.array(list(morph.initial_arm_orientation), dtype=np.float32)
+                    for e in range(morph.num_envs):
+                        axis = morph.rng.uniform(-1, 1, size=3)
+                        angle = morph.rng.uniform(-config.target_spawn_rot_noise, config.target_spawn_rot_noise)
+                        random_rot_np = quat_from_axis_angle_np(axis, angle)
+                        # Apply random rotation relative to the base orientation
+                        target_orientations[e] = quat_mul_np(base_quat_np, random_rot_np)
+
+                    morph.target_ori = target_orientations
+
+                # --- Training Iterations within Rollout ---
+                for j in range(config.train_iters):
+                    # 1. Calculate Error *before* the step for logging
+                    ee_error_flat_wp = morph.compute_ee_error()
+                    ee_error_flat_np = ee_error_flat_wp.numpy() # Transfer for logging calculations
+                    error_reshaped_np = ee_error_flat_np.reshape(morph.num_envs, 6)
+
+                    # Calculate position error magnitude per env
+                    pos_err_mag = np.linalg.norm(error_reshaped_np[:, 0:3], axis=1)
+
+                    # Calculate orientation error magnitude per env
+                    ori_err_mag = np.linalg.norm(error_reshaped_np[:, 3:6], axis=1)
+
+                    # 2. Perform the actual IK step
+                    morph.step() # This internally profiles _step
+
+                    # 3. Log metrics to WandB (if enabled)
+                    if morph.wandb_run:
+                        log_data = {
+                            "rollout": i,
+                            "train_iter": j,
+                            "error/pos/mean": np.mean(pos_err_mag),
+                            "error/pos/min": np.min(pos_err_mag),
+                            "error/pos/max": np.max(pos_err_mag),
+                            "error/ori/mean": np.mean(ori_err_mag),
+                            "error/ori/min": np.min(ori_err_mag),
+                            "error/ori/max": np.max(ori_err_mag),
+                        }
+                        # Get the last _step time from the profiler's list
+                        if '_step' in morph.profiler and morph.profiler['_step']:
+                             log_data["perf/_step_time_ms"] = morph.profiler['_step'][-1]
+                        # Log using global_step as the x-axis
+                        morph.wandb_run.log(log_data, step=global_step)
+
+                    # 4. Render the frame (optional)
+                    morph.render()
+
+                    # 5. Increment global step counter
+                    global_step += 1
+
+                log.info(f"--- Finished Rollout {i+1} ---")
+                log.info(f"  Final Mean Pos Error: {np.mean(pos_err_mag):.5f}")
+                log.info(f"  Final Mean Ori Error: {np.mean(ori_err_mag):.5f}")
+
+
+        # --- End of Simulation ---
+        log.info("Simulation loop completed.")
+
+        # Save the USD rendering
         if not config.headless and morph.renderer is not None:
-            morph.renderer.save()
+            try:
+                with wp.ScopedTimer("usd_save", print=False, active=True, dict=morph.profiler):
+                     morph.renderer.save()
+                     log.info(f"USD recording saved to {morph.usd_output_path}")
+            except Exception as e:
+                log.error(f"Failed to save USD file: {e}")
 
-        # Log profiling results
-        log.info("Performance Profile:")
+        # --- Final Results & Profiling Summary ---
+        log.info("--- Performance Profile Summary ---")
+        total_steps = config.num_rollouts * config.train_iters
+        summary_results = {}
+
         for key, times in morph.profiler.items():
-            avg_time = np.array(times).mean()
-            avg_steps_second = 1000.0 * float(morph.num_envs) / avg_time if key != "target_update" else 1000.0 / avg_time
-            log.info(f"  {key}: {avg_time:.3f} ms ({avg_steps_second:.2f} steps/s)")
+            if not times: continue # Skip empty timers
+            avg_time_ms = np.mean(times)
+            std_time_ms = np.std(times)
+            total_time_s = np.sum(times) / 1000.0
+            log.info(f"  {key}: Avg: {avg_time_ms:.3f} ms, Std: {std_time_ms:.3f} ms, Total: {total_time_s:.3f} s")
+            summary_results[f"perf/{key}_avg_ms"] = avg_time_ms
+            summary_results[f"perf/{key}_std_ms"] = std_time_ms
+            summary_results[f"perf/{key}_total_s"] = total_time_s
 
-        # save results
+            # Calculate steps/sec specifically for _step
+            if key == '_step' and avg_time_ms > 0:
+                steps_per_sec = (1000.0 / avg_time_ms) * morph.num_envs
+                log.info(f"    -> Approx. Steps/sec: {steps_per_sec:.2f} (env*steps/sec)")
+                summary_results["perf/steps_per_sec"] = steps_per_sec
+
+        # Store final error metrics in results
+        # Use the last calculated errors before loop exit
+        results["final_pos_error_mean"] = np.mean(pos_err_mag)
+        results["final_pos_error_min"] = np.min(pos_err_mag)
+        results["final_pos_error_max"] = np.max(pos_err_mag)
+        results["final_ori_error_mean"] = np.mean(ori_err_mag)
+        results["final_ori_error_min"] = np.min(ori_err_mag)
+        results["final_ori_error_max"] = np.max(ori_err_mag)
+
+        # Update wandb summary
+        if morph.wandb_run:
+            morph.wandb_run.summary.update(summary_results)
+            morph.wandb_run.summary.update({
+                 "final/pos_error_mean": results["final_pos_error_mean"],
+                 "final/pos_error_min": results["final_pos_error_min"],
+                 "final/pos_error_max": results["final_pos_error_max"],
+                 "final/ori_error_mean": results["final_ori_error_mean"],
+                 "final/ori_error_min": results["final_ori_error_min"],
+                 "final/ori_error_max": results["final_ori_error_max"],
+            })
+
+        # Save results dictionary to file
         results_filepath = os.path.join(config.morph_output_dir, "results.json")
-        with open(results_filepath, 'w') as f:
-            json.dump(results, f, indent=4)
-        if config.track:
-            wandb.save(results_filepath)
+        try:
+            with open(results_filepath, 'w') as f:
+                 # Combine summary stats with final errors for the json file
+                 results.update(summary_results)
+                 json.dump(results, f, indent=4)
+            log.info(f"Results saved to {results_filepath}")
+            # Save to wandb as artifact
+            if morph.wandb_run:
+               results_artifact = wandb.Artifact(f"results_{morph.wandb_run.id}", type="results")
+               results_artifact.add_file(results_filepath)
+               morph.wandb_run.log_artifact(results_artifact)
+
+        except Exception as e:
+             log.error(f"Failed to save results JSON: {e}")
+
+    except Exception as e:
+        log.exception(f"Simulation loop failed: {e}")
+        results["error"] = f"Simulation loop failed: {e}"
+        # Ensure wandb run is finished with error status if it exists
+        if config.track and wandb and wandb.run:
+             wandb.finish(exit_code=1)
+             morph.wandb_run = None # Prevent finishing again in finally
+        return results # Return error state
+    finally:
+        # Ensure wandb run is finished cleanly if simulation completes or fails after init
+        if config.track and morph and morph.wandb_run:
+            log.info("Finishing WandB run...")
             wandb.finish()
 
-    log.info(f"simulation complete!")
-    log.info(f"performed {config.num_rollouts * config.train_iters} steps")
+    log.info(f"Simulation complete for morph {config.morph}!")
+    log.info(f"Performed {total_steps} total training steps across {config.num_rollouts} rollouts.")
+    return results
 
 
 if __name__ == "__main__":

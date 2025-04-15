@@ -4,15 +4,16 @@
 make sure to send .env file to the nodes:
 
 ```bash
-scp -i ~/.ssh/oop.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null .env ubuntu@192.222.50.212:/home/ubuntu/warp-ik/.env
+scp -i ~/.ssh/oop.pem -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null .env ubuntu@192.222.50.145:/home/ubuntu/warp-ik/.env
 scp .env ojo@192.168.1.96:/home/ojo/dev/warp-ik/.env
 scp .env trossen-ai@192.168.1.97:/home/trossen-ai/dev/warp-ik/.env
+scp .env rpi1@192.168.1.98:/home/rpi1/dev/warp-ik/.env
 ```
 
 using a lambda labs `gpu_1x_gh200` node and the `oop` ssh key:
 
 ```bash
-ssh -i ~/.ssh/oop.pem ubuntu@192.222.50.212
+ssh -i ~/.ssh/oop.pem ubuntu@192.222.50.145
 git clone https://github.com/hu-po/warp-ik.git
 cd warp-ik
 sudo usermod -aG docker ubuntu
@@ -53,4 +54,20 @@ run them all
 ./scripts/docker.run.morph.sh x86-3090 jacobian_fd && \
 ./scripts/docker.run.morph.sh x86-3090 jacobian_dls_6d && \
 ./scripts/docker.run.morph.sh x86-3090 optim_adam_6d
+```
+
+when logging in fresh to each node, set the environment variables:
+
+```bash
+export DOCKERFILE="x86-3090"
+export DOCKERFILE="arm-agx"
+export DOCKERFILE="x86-meerkat"
+export DOCKERFILE="arm-gh200"
+export DOCKERFILE="arm-rpi"
+```
+
+test the dockerfile
+
+```bash
+./scripts/docker.test.sh $DOCKERFILE
 ```

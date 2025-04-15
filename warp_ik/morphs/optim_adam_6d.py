@@ -43,6 +43,14 @@ def adam_update_kernel(
     m_out[tid] = m_new
     v_out[tid] = v_new
 
+@wp.kernel
+def elementwise_square_kernel(input_arr: wp.array(dtype=float),
+                              output_arr: wp.array(dtype=float)):
+    """Calculates output[i] = input[i] * input[i]"""
+    tid = wp.tid()
+    val = input_arr[tid]
+    output_arr[tid] = val * val
+
 
 class Morph(BaseMorph):
     """
@@ -71,12 +79,9 @@ class Morph(BaseMorph):
     def _update_config(self):
         """
         Updates the configuration specific to the Adam Optimization Morph.
-
-        Sets the base learning rate, Adam hyperparameters (beta1, beta2, epsilon),
-        and ensures gradients are enabled.
         """
-        # Use step_size as the base learning rate, or define a new config param
-        self.config.step_size = 0.01 # Adam often needs smaller learning rates
+        self.config.joint_q_requires_grad = True  # Add this line to ensure gradients are enabled
+        self.config.step_size = 0.01
         self.config.config_extras = {
             "beta1": 0.9,
             "beta2": 0.999,
@@ -102,23 +107,40 @@ class Morph(BaseMorph):
         self.adam_t += 1 # Increment timestep counter
 
         tape = wp.Tape()
-        grad_q = None # To store the gradient
+        grad_q = None
 
-        # Record computation graph for the scalar loss
+        # Record computation graph
         with tape:
-            ee_error_wp = self.compute_ee_error() # Shape (num_envs * 6)
-            # Calculate element-wise square of the error
-            squared_error = ee_error_wp * ee_error_wp
-            # Sum all elements of the squared error array to get a scalar loss
-            loss = wp.reduce_sum(squared_error)
+            ee_error_wp = self.compute_ee_error()
+            squared_error = wp.zeros_like(ee_error_wp)
+            wp.launch(
+                kernel=elementwise_square_kernel,
+                dim=ee_error_wp.shape[0],
+                inputs=[ee_error_wp],
+                outputs=[squared_error],
+                device=self.config.device
+            )
 
-        # Compute gradient of the total loss w.r.t. joint angles
-        tape.backward(loss=loss)
-        grad_q = tape.gradients[self.model.joint_q] # Shape (num_envs * dof)
+        # Try backward pass with squared_error directly
+        try:
+            tape.backward(loss=squared_error)
+        except Exception as e:
+            print(f"tape.backward failed: {e}")
+            print(f"Shape of 'loss' array passed to backward: {squared_error.shape}")
+            raise
+
+        # Check gradients after backward call
+        try:
+            grad_q = tape.gradients[self.model.joint_q]
+        except KeyError:
+            print("KeyError accessing gradients for self.model.joint_q after backward.")
+            print(f"joint_q requires_grad: {self.model.joint_q.requires_grad}")
+            print(f"Available gradient keys: {list(tape.gradients.keys())}")
+            grad_q = None
 
         if grad_q is None:
-             log.warning("Gradient computation failed in Adam step.")
-             return # Skip update if gradient is None
+            print("Gradient computation failed or key not found in Adam step.")
+            return
 
         # Create output array for the kernel
         q_new = wp.zeros_like(self.model.joint_q)
