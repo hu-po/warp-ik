@@ -72,7 +72,7 @@ class Morph(BaseMorph):
         Sets the step size for joint updates and ensures gradients are enabled
         for joint angles, as this method relies on automatic differentiation.
         """
-        self.config.step_size = 1.0  # Step size for joint angle updates
+        self.config.step_size = 0.1
         self.config.joint_q_requires_grad = True
 
     def _step(self):
