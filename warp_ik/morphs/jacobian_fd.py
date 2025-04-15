@@ -53,9 +53,9 @@ class Morph(BaseMorph):
         method computes the Jacobian numerically.
         """
         self.config.step_size = 0.5  # Step size for joint angle updates
+        self.config.joint_q_requires_grad = False
         self.config.config_extras = {
             "eps": 1e-4,  # Epsilon value for finite difference calculation
-            "joint_q_requires_grad": False,  # No gradients needed for finite differences
         }
 
     def _step(self):

@@ -97,6 +97,7 @@ class MorphConfig:
     ]) # amount of random noise to add to the arm joint angles during initialization
     config_extras: dict = field(default_factory=dict) # additional morph-specific config values
     body_q_requires_grad: bool = True # whether to require gradients for the body positions
+    joint_q_requires_grad: bool = True # whether to require gradients for the joint angles
     joint_attach_ke: float = 1600.0 # stiffness of the joint attachment
     joint_attach_kd: float = 20.0 # damping of the joint attachment
 
@@ -349,9 +350,9 @@ class BaseMorph:
                         config=config_dict,
                         # Explicitly enable system metrics monitoring
                         settings=wandb.Settings(
-                            enable_system_metrics=True,
-                            _stats_sample_rate_seconds=2,
-                            _stats_samples_to_average=1
+                            system_metrics=True,
+                            stats_sample_rate_seconds=2,
+                            stats_samples_to_average=1
                         )
                     )
                     # Update config with the *final* values used
@@ -517,6 +518,7 @@ class BaseMorph:
         self.model.ground = False
         self.model.joint_q.assign(wp.array(initial_joint_q, dtype=wp.float32, device=self.config.device))
         self.model.body_q.requires_grad = self.config.body_q_requires_grad
+        self.model.joint_q.requires_grad = self.config.joint_q_requires_grad
         self.model.joint_attach_ke = self.config.joint_attach_ke
         self.model.joint_attach_kd = self.config.joint_attach_kd
 

@@ -57,9 +57,9 @@ class Morph(BaseMorph):
         DLS damping factor lambda to config_extras.
         """
         self.config.step_size = 1.0  # Step size (learning rate) for joint angle updates
+        self.config.joint_q_requires_grad = True
         self.config.config_extras = {
             "lambda": 0.1,  # Damping factor lambda
-            "joint_q_requires_grad": True,
         }
 
     def _step(self):

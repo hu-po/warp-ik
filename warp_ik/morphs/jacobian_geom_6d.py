@@ -70,9 +70,7 @@ class Morph(BaseMorph):
         for joint angles, as this method relies on automatic differentiation.
         """
         self.config.step_size = 1.0  # Step size for joint angle updates
-        self.config.config_extras = {
-            "joint_q_requires_grad": True,  # Gradients required for autodiff
-        }
+        self.config.joint_q_requires_grad = True
 
     def _step(self):
         """

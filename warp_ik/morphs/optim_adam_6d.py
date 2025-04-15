@@ -90,11 +90,11 @@ class Morph(BaseMorph):
         Updates the configuration specific to the Adam Optimization Morph.
         """
         self.config.step_size = 0.01  # Base learning rate
+        self.config.joint_q_requires_grad = True
         self.config.config_extras = {
             "beta1": 0.9,      # Exponential decay rate for first moment
             "beta2": 0.999,    # Exponential decay rate for second moment
             "epsilon": 1e-8,   # Small constant for numerical stability
-            "joint_q_requires_grad": True,  # Required for autodiff
         }
 
     def _step(self):
