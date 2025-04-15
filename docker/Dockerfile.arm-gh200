@@ -2,7 +2,7 @@
 FROM nvcr.io/nvidia/cuda:12.8.1-devel-ubuntu22.04@sha256:068e9c6a072aba2a5f07618f620ceb8cd1412d6d9e53b46191ab5c797997f46a
 ENV ACCEPT_EULA="Y"
 ENV PYTHON_VERSION=3.10
-ENV DOCKERFILE="arm-gh200"
+ENV BACKEND="arm-gh200"
 ENV WARP_IK_ROOT=/root/warp-ik
 ENV UV_PROJECT_ENVIRONMENT=/root/warp-ik/.venv
 ENV NVIDIA_VISIBLE_DEVICES=all
@@ -21,8 +21,8 @@ RUN mkdir -p $WARP_IK_ROOT/warp_ik/morphs \
     $WARP_IK_ROOT/.venv
 RUN git clone https://github.com/TrossenRobotics/trossen_arm_description.git $WARP_IK_ROOT/assets/trossen_arm_description
 RUN uv venv --python $PYTHON_VERSION $UV_PROJECT_ENVIRONMENT
-COPY docker/requirements.$DOCKERFILE.txt $WARP_IK_ROOT/requirements.$DOCKERFILE.txt
-RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && uv pip install -r requirements.$DOCKERFILE.txt
+COPY docker/requirements.$BACKEND.txt $WARP_IK_ROOT/requirements.$BACKEND.txt
+RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && uv pip install -r requirements.$BACKEND.txt
 COPY pyproject.toml $WARP_IK_ROOT/pyproject.toml
 COPY warp_ik/ $WARP_IK_ROOT/warp_ik/
 RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && uv pip install -e .[dev]

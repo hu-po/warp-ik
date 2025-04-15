@@ -1,4 +1,4 @@
-warp-lang @ https://github.com/NVIDIA/warp/releases/download/v1.7.0/warp_lang-1.7.0+cpu-py3-none-macosx_10_13_universal2.whl
+warp-lang
 trimesh==4.6.6
 wandb==0.19.9
 anthropic==0.49.0

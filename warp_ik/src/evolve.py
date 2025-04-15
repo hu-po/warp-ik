@@ -29,7 +29,7 @@ class EvolveConfig:
     num_morphs: int = 12 # size of the population of morphs (replentished every round)
     topk_morphs: int = 6 # number of top morphs to keep each round
     mutate_on_start: bool = False # whether to mutate protomorphs at the start
-    dockerfile: str = os.environ.get("DOCKERFILE") # dockerfile variant
+    backend: str = os.environ.get("BACKEND") # compute backend variant
     root_dir: str = os.environ.get("WARP_IK_ROOT") # root directory of the warp-ik project
     protomorphs: str = os.environ.get("PROTOMORPHS") # comma separated list of protomorphs to seed evolution
     output_dir: str = f"{root_dir}/output" # output directory for the morphs
@@ -122,7 +122,7 @@ def evolve(config: EvolveConfig):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=EvolveConfig.seed)
-    parser.add_argument("--dockerfile", type=str, default=EvolveConfig.dockerfile, help="Override default dockerfile variant.")
+    parser.add_argument("--backend", type=str, default=EvolveConfig.backend, help="Override default compute backend variant.")
     parser.add_argument("--protomorphs", type=str, default=EvolveConfig.protomorphs, help="comma separated list of protomorphs to seed evolution")
     parser.add_argument("--num_rounds", type=int, default=EvolveConfig.num_rounds, help="number of rounds to run")
     parser.add_argument("--num_morphs", type=int, default=EvolveConfig.num_morphs, help="number of morphs per round")
@@ -133,7 +133,7 @@ if __name__ == "__main__":
     # Create config from args
     config = EvolveConfig(
         seed=args.seed,
-        dockerfile=args.dockerfile,
+        backend=args.backend,
         protomorphs=args.protomorphs,
         num_rounds=args.num_rounds,
         num_morphs=args.num_morphs,

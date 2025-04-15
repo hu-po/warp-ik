@@ -30,7 +30,7 @@ uv run python src/test.py
 docker test, specify the compute backend `x86-3090`
 
 ```bash
-export DOCKERFILE=x86-3090
+export BACKEND=x86-3090
 ./scripts/docker.test.sh
 ```   
 

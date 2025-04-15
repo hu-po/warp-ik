@@ -1,4 +1,3 @@
-
 # Checking on GH200
 
 make sure to send .env file to the nodes:
@@ -59,15 +58,15 @@ run them all
 when logging in fresh to each node, set the environment variables:
 
 ```bash
-export DOCKERFILE="x86-3090"
-export DOCKERFILE="arm-agx"
-export DOCKERFILE="x86-meerkat"
-export DOCKERFILE="arm-gh200"
-export DOCKERFILE="arm-rpi"
+export BACKEND="x86-3090"
+export BACKEND="arm-agx"
+export BACKEND="x86-meerkat"
+export BACKEND="arm-gh200"
+export BACKEND="arm-rpi"
 ```
 
-test the dockerfile
+test the backend
 
 ```bash
-./scripts/docker.test.sh $DOCKERFILE
+./scripts/docker.test.sh $BACKEND
 ```

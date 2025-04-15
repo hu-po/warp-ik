@@ -1,6 +1,6 @@
 FROM python:3.11-slim-bookworm
 ENV PYTHON_VERSION=3.11
-ENV DOCKERFILE="x86-meerkat"
+ENV BACKEND="x86-meerkat"
 ENV WARP_IK_ROOT=/root/warp-ik
 ENV UV_PROJECT_ENVIRONMENT=/root/warp-ik/.venv
 COPY --from=ghcr.io/astral-sh/uv:0.5.1 /uv /uvx /bin/
@@ -17,8 +17,8 @@ RUN mkdir -p $WARP_IK_ROOT/warp_ik/morphs \
     $WARP_IK_ROOT/.venv
 RUN git clone https://github.com/TrossenRobotics/trossen_arm_description.git $WARP_IK_ROOT/assets/trossen_arm_description
 RUN uv venv --python $PYTHON_VERSION $UV_PROJECT_ENVIRONMENT
-COPY docker/requirements.$DOCKERFILE.txt $WARP_IK_ROOT/requirements.$DOCKERFILE.txt
-RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && uv pip install -r requirements.$DOCKERFILE.txt
+COPY docker/requirements.$BACKEND.txt $WARP_IK_ROOT/requirements.$BACKEND.txt
+RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && uv pip install -r requirements.$BACKEND.txt
 COPY pyproject.toml $WARP_IK_ROOT/pyproject.toml
 COPY warp_ik/ $WARP_IK_ROOT/warp_ik/
 RUN . $UV_PROJECT_ENVIRONMENT/bin/activate && uv pip install -e .[dev]
