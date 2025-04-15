@@ -117,42 +117,6 @@ class ActiveMorph:
     name: str
     state: MorphState = MorphState.NOT_RUN_YET
 
-def quat_to_rot_matrix_np(q):
-    x, y, z, w = q
-    return np.array([
-        [1 - 2 * (y ** 2 + z ** 2),     2 * (x * y - z * w),         2 * (x * z + y * w)],
-        [2 * (x * y + z * w),           1 - 2 * (x ** 2 + z ** 2),   2 * (y * z - x * w)],
-        [2 * (x * z - y * w),           2 * (y * z + x * w),         1 - 2 * (x ** 2 + y ** 2)]
-    ], dtype=np.float32)
-
-def quat_from_axis_angle_np(axis, angle):
-    axis_norm = np.linalg.norm(axis)
-    if axis_norm < 1e-6: return np.array([0.0, 0.0, 0.0, 1.0], dtype=np.float32) # Return identity if axis is zero
-    axis = axis / axis_norm
-    s = np.sin(angle / 2.0)
-    return np.array([axis[0] * s, axis[1] * s, axis[2] * s, np.cos(angle / 2.0)], dtype=np.float32)
-
-def apply_transform_np(translation, quat, point):
-    R = quat_to_rot_matrix_np(quat)
-    return translation + R.dot(point)
-
-def quat_mul_np(q1, q2):
-    x1, y1, z1, w1 = q1
-    x2, y2, z2, w2 = q2
-    return np.array([
-        w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
-        w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
-        w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
-        w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
-    ], dtype=np.float32)
-
-def get_body_quaternions(state_body_q_np: np.ndarray, num_links: int, ee_link_index: int) -> np.ndarray:
-    """Extracts EE quaternions from the flattened body_q numpy array."""
-    num_envs = state_body_q_np.shape[0] // num_links
-    # Quaternions are elements 3, 4, 5, 6 (qx, qy, qz, qw)
-    ee_indices = np.arange(num_envs) * num_links + ee_link_index
-    return state_body_q_np[ee_indices, 3:7]
-
 @wp.func
 def quat_mul(q1: wp.quat, q2: wp.quat) -> wp.quat:
     return wp.quat(
@@ -178,7 +142,6 @@ def quat_orientation_error(target: wp.quat, current: wp.quat) -> wp.vec3:
     # Return axis * angle (scaled by 2), which is approx 2 * axis * sin(angle/2)
     # Magnitude is related to the angle error
     return wp.vec3(qx, qy, qz) * 2.0
-
 
 @wp.kernel
 def compute_ee_error_kernel(
@@ -214,6 +177,140 @@ def compute_ee_error_kernel(
     error_out[base + 4] = ori_err.y
     error_out[base + 5] = ori_err.z
 
+@wp.kernel
+def clip_joints_kernel(
+    joint_q: wp.array(dtype=wp.float32), # Input/Output array
+    joint_limits_min: wp.array(dtype=wp.float32), # Min limits per DOF type
+    joint_limits_max: wp.array(dtype=wp.float32), # Max limits per DOF type
+    num_envs: int,
+    dof: int
+):
+    tid = wp.tid() # Unique index for each joint DOF across all envs
+
+    # Calculate which DOF this thread corresponds to
+    joint_idx = tid % dof
+
+    # Clamp the value
+    current_val = joint_q[tid]
+    min_val = joint_limits_min[joint_idx]
+    max_val = joint_limits_max[joint_idx]
+    joint_q[tid] = wp.clamp(current_val, min_val, max_val)
+
+@wp.kernel
+def update_targets_kernel(
+    target_origins: wp.array(dtype=wp.vec3),
+    initial_base_orientation: wp.quat, # The common base rotation
+    pos_noise_scale: float,
+    rot_noise_scale: float,
+    seed: int, # Seed for RNG state
+    # Outputs:
+    out_target_pos: wp.array(dtype=wp.vec3),
+    out_target_ori: wp.array(dtype=wp.quat)
+):
+    tid = wp.tid() # Environment index
+
+    # Initialize random state for this thread
+    state = wp.rand_init(seed, tid)
+
+    # Positional Noise
+    noise_x = wp.randf(state, -0.5, 0.5) * pos_noise_scale
+    noise_y = wp.randf(state, -0.5, 0.5) * pos_noise_scale
+    noise_z = wp.randf(state, -0.5, 0.5) * pos_noise_scale
+    pos_noise_vec = wp.vec3(noise_x, noise_y, noise_z)
+
+    out_target_pos[tid] = target_origins[tid] + pos_noise_vec
+
+    # Rotational Noise (Axis-Angle)
+    axis_x = wp.randf(state, -1.0, 1.0)
+    axis_y = wp.randf(state, -1.0, 1.0)
+    axis_z = wp.randf(state, -1.0, 1.0)
+    noise_axis = wp.normalize(wp.vec3(axis_x, axis_y, axis_z))
+    noise_angle = wp.randf(state, -rot_noise_scale, rot_noise_scale)
+
+    random_rot = wp.quat_from_axis_angle(noise_axis, noise_angle)
+
+    # Apply random rotation relative to the initial base orientation
+    out_target_ori[tid] = quat_mul(initial_base_orientation, random_rot)
+
+@wp.kernel
+def calculate_error_magnitudes_kernel(
+    flat_errors: wp.array(dtype=wp.float32), # Input: num_envs * 6
+    num_envs: int,
+    # Outputs:
+    out_pos_mag: wp.array(dtype=wp.float32),
+    out_ori_mag: wp.array(dtype=wp.float32)
+):
+    tid = wp.tid() # Environment index
+    base = tid * 6
+
+    # Extract pos and ori error vectors
+    pos_err = wp.vec3(flat_errors[base + 0], flat_errors[base + 1], flat_errors[base + 2])
+    ori_err = wp.vec3(flat_errors[base + 3], flat_errors[base + 4], flat_errors[base + 5])
+
+    # Calculate and store magnitudes
+    out_pos_mag[tid] = wp.length(pos_err)
+    out_ori_mag[tid] = wp.length(ori_err)
+
+@wp.kernel
+def calculate_gizmo_transforms_kernel(
+    body_q: wp.array(dtype=wp.transform),
+    targets_pos: wp.array(dtype=wp.vec3),
+    targets_ori: wp.array(dtype=wp.quat),
+    num_links: int,
+    ee_link_index: int,
+    ee_link_offset: wp.vec3,
+    num_envs: int,
+    rot_x_axis_q: wp.quat, # Precomputed axis rotations
+    rot_y_axis_q: wp.quat,
+    rot_z_axis_q: wp.quat,
+    cone_half_height: float,
+    # Outputs (flat array, order: TgtX,TgtY,TgtZ, EEX,EEY,EEZ per env)
+    out_gizmo_pos: wp.array(dtype=wp.vec3),
+    out_gizmo_rot: wp.array(dtype=wp.quat)
+):
+    tid = wp.tid() # Environment index
+
+    # --- Target Gizmos ---
+    target_pos = targets_pos[tid]
+    target_ori = targets_ori[tid]
+
+    target_rot_x = quat_mul(target_ori, rot_x_axis_q)
+    target_rot_y = quat_mul(target_ori, rot_y_axis_q)
+    target_rot_z = quat_mul(target_ori, rot_z_axis_q)
+
+    offset_vec = wp.vec3(0.0, cone_half_height, 0.0)
+    offset_x = wp.quat_rotate(target_rot_x, offset_vec)
+    offset_y = wp.quat_rotate(target_rot_y, offset_vec)
+    offset_z = wp.quat_rotate(target_rot_z, offset_vec)
+
+    base_idx = tid * 6
+    out_gizmo_pos[base_idx + 0] = target_pos - offset_x
+    out_gizmo_rot[base_idx + 0] = target_rot_x
+    out_gizmo_pos[base_idx + 1] = target_pos - offset_y
+    out_gizmo_rot[base_idx + 1] = target_rot_y
+    out_gizmo_pos[base_idx + 2] = target_pos - offset_z
+    out_gizmo_rot[base_idx + 2] = target_rot_z
+
+    # --- End-Effector Gizmos ---
+    t_flat = body_q[tid * num_links + ee_link_index]
+    ee_link_pos = wp.vec3(t_flat[0], t_flat[1], t_flat[2])
+    ee_link_ori = wp.quat(t_flat[3], t_flat[4], t_flat[5], t_flat[6])
+    ee_tip_pos = wp.transform_point(wp.transform(ee_link_pos, ee_link_ori), ee_link_offset)
+
+    ee_rot_x = quat_mul(ee_link_ori, rot_x_axis_q)
+    ee_rot_y = quat_mul(ee_link_ori, rot_y_axis_q)
+    ee_rot_z = quat_mul(ee_link_ori, rot_z_axis_q)
+
+    ee_offset_x = wp.quat_rotate(ee_rot_x, offset_vec)
+    ee_offset_y = wp.quat_rotate(ee_rot_y, offset_vec)
+    ee_offset_z = wp.quat_rotate(ee_rot_z, offset_vec)
+
+    out_gizmo_pos[base_idx + 3] = ee_tip_pos - ee_offset_x
+    out_gizmo_rot[base_idx + 3] = ee_rot_x
+    out_gizmo_pos[base_idx + 4] = ee_tip_pos - ee_offset_y
+    out_gizmo_rot[base_idx + 4] = ee_rot_y
+    out_gizmo_pos[base_idx + 5] = ee_tip_pos - ee_offset_z
+    out_gizmo_rot[base_idx + 5] = ee_rot_z
 
 class BaseMorph:
 
@@ -305,6 +402,11 @@ class BaseMorph:
         self.num_links = len(articulation_builder.joint_type)
         self.dof = len(articulation_builder.joint_q)
         self.joint_limits = np.array(self.config.joint_limits, dtype=np.float32)
+        
+        # Create Warp arrays for joint limits
+        self.joint_limits_min_wp = wp.array(self.joint_limits[:, 0], dtype=wp.float32, device=self.config.device)
+        self.joint_limits_max_wp = wp.array(self.joint_limits[:, 1], dtype=wp.float32, device=self.config.device)
+        
         log.info(f"Parsed URDF with {self.num_links} links and {self.dof} dof")
 
         # Locate ee_gripper link.
@@ -345,11 +447,11 @@ class BaseMorph:
 
 
         # Compute initial arm orientation.
-        _initial_arm_orientation_np = np.array([0.,0.,0.,1.], dtype=np.float32) # Start with identity
+        _initial_arm_orientation_wp = wp.quat(0.,0.,0.,1.) # Start with identity
         for axis, angle in self.config.arm_rot_offset:
-            rot_quat_np = quat_from_axis_angle_np(np.array(axis), angle)
-            _initial_arm_orientation_np = quat_mul_np(rot_quat_np, _initial_arm_orientation_np) # Apply rotation
-        self.initial_arm_orientation = wp.quat(_initial_arm_orientation_np) # Store as Warp quat
+            rot_quat_wp = wp.quat_from_axis_angle(wp.vec3(axis[0], axis[1], axis[2]), angle)
+            _initial_arm_orientation_wp = quat_mul(rot_quat_wp, _initial_arm_orientation_wp) # Apply rotation
+        self.initial_arm_orientation = _initial_arm_orientation_wp # Store as Warp quat
         log.debug(f"Initial arm orientation: {list(self.initial_arm_orientation)}")
 
 
@@ -371,16 +473,16 @@ class BaseMorph:
             col = e % self.num_rows
             x = col * self.arm_spacing_xz
             z = row * self.arm_spacing_xz
-            base_translation = np.array([x, self.arm_height, z], dtype=np.float32)
-            base_quat = _initial_arm_orientation_np # Use the final computed numpy orientation
+            base_translation = wp.vec3(x, self.arm_height, z)
+            base_quat = _initial_arm_orientation_wp # Use the final computed Warp orientation
 
             # Define the target offset in robot coordinates and transform to world
-            target_offset_local = np.array(self.config.target_offset, dtype=np.float32)
-            target_world = apply_transform_np(base_translation, base_quat, target_offset_local)
+            target_offset_local = wp.vec3(self.config.target_offset)
+            target_world = wp.transform_point(wp.transform(base_translation, base_quat), self.ee_link_offset)
             self.target_origin.append(target_world)
 
             # Add arm instance to the main builder
-            builder.add_builder(articulation_builder, xform=wp.transform(wp.vec3(x, self.arm_height, z), self.initial_arm_orientation))
+            builder.add_builder(articulation_builder, xform=wp.transform(base_translation, self.initial_arm_orientation))
 
             # Set initial joint angles for this environment
             env_joint_q = []
@@ -404,9 +506,9 @@ class BaseMorph:
 
             initial_joint_q.extend(env_joint_q)
 
-        self.target_origin = np.array(self.target_origin)
+        self.target_origin = wp.array(self.target_origin, dtype=wp.vec3, device=self.config.device)
         # Initial target orientation (identity relative to base)
-        self.target_ori = np.tile(_initial_arm_orientation_np, (self.num_envs, 1))
+        self.target_ori = wp.tile(self.initial_arm_orientation, (self.num_envs, 1))
         log.debug(f"Initial target orientations (first env): {self.target_ori[0]}")
 
         # Finalize model.
@@ -429,6 +531,14 @@ class BaseMorph:
                  # Log USD path to wandb if tracking
                  if self.wandb_run:
                      self.wandb_run.summary['usd_output_path'] = self.usd_output_path
+
+                 # Initialize gizmo transform arrays and precomputed rotations
+                 self.gizmo_pos_wp = wp.zeros(self.num_envs * 6, dtype=wp.vec3, device=self.config.device)
+                 self.gizmo_rot_wp = wp.zeros(self.num_envs * 6, dtype=wp.quat, device=self.config.device)
+                 self.rot_x_axis_q_wp = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), math.pi / 2.0)
+                 self.rot_y_axis_q_wp = wp.quat_identity()
+                 self.rot_z_axis_q_wp = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), -math.pi / 2.0)
+
              except Exception as e:
                  log.error(f"Failed to initialize renderer: {e}. Running headless.")
                  self.config.headless = True # Force headless if renderer fails
@@ -440,10 +550,23 @@ class BaseMorph:
         self.ee_pos = wp.zeros(self.num_envs, dtype=wp.vec3, requires_grad=True, device=self.config.device)
         # ee_error stores the flattened 6D error [err_px, py, pz, ox, oy, oz] * num_envs
         self.ee_error = wp.zeros(self.num_envs * 6, dtype=wp.float32, requires_grad=True, device=self.config.device)
+        
+        # Add arrays for error magnitudes
+        self.ee_pos_err_mag_wp = wp.zeros(self.num_envs, dtype=wp.float32, device=self.config.device)
+        self.ee_ori_err_mag_wp = wp.zeros(self.num_envs, dtype=wp.float32, device=self.config.device)
+        
         # Get initial state from model
         self.state = self.model.state(requires_grad=True) # Get state AFTER setting initial joint_q
-        # Target positions (world frame)
-        self.targets = self.target_origin.copy() # Current target positions for each env
+
+        # Initialize runtime target arrays on GPU
+        self.targets_wp = wp.array(self.target_origin, dtype=wp.vec3, device=self.config.device, requires_grad=False)
+        initial_target_ori_wp = wp.tile(self.initial_arm_orientation, (self.num_envs, 1))
+        self.target_ori_wp = wp.array(initial_target_ori_wp, dtype=wp.quat, device=self.config.device, requires_grad=False)
+
+        # Keep numpy versions for compatibility
+        self.targets = self.target_origin.copy()
+        self.target_ori = initial_target_ori_wp.copy()
+
         # Profiler dictionary
         self.profiler = {}
         # --- End Simulation State ---
@@ -489,16 +612,23 @@ class BaseMorph:
         # Profile the morph-specific implementation
         with wp.ScopedTimer("_step", print=False, active=True, dict=self.profiler, color="red"):
             self._step() # Execute the morph's core logic
-        # Clipping joint angles after the step to respect limits
-        current_q = self.model.joint_q.numpy()
-        # Tile the joint limits to match the number of environments
-        min_limits = np.tile(self.joint_limits[:, 0], self.num_envs)
-        max_limits = np.tile(self.joint_limits[:, 1], self.num_envs)
-        clipped_q = np.clip(current_q, min_limits, max_limits)
-        self.model.joint_q.assign(wp.array(clipped_q, dtype=wp.float32, device=self.config.device))
+
+        # Clipping joint angles after the step to respect limits (on GPU)
+        with wp.ScopedTimer("clip_joints", print=False, active=True, dict=self.profiler):
+            wp.launch(
+                kernel=clip_joints_kernel,
+                dim=self.num_envs * self.dof, # Launch one thread per DOF instance
+                inputs=[
+                    self.model.joint_q,
+                    self.joint_limits_min_wp,
+                    self.joint_limits_max_wp,
+                    self.num_envs,
+                    self.dof
+                ],
+                device=self.config.device
+            )
 
 
-    # --- render_gizmos and render_error_bars remain the same ---
     def render_gizmos(self):
         if self.renderer is None:
             return
@@ -509,54 +639,44 @@ class BaseMorph:
         cone_height = self.config.gizmo_length
         cone_half_height = cone_height / 2.0
 
-        rot_x_axis = wp.quat_from_axis_angle(wp.vec3(0.0, 0.0, 1.0), math.pi / 2.0)
-        rot_y_axis = wp.quat_identity()
-        rot_z_axis = wp.quat_from_axis_angle(wp.vec3(1.0, 0.0, 0.0), -math.pi / 2.0)
+        # Calculate all gizmo transforms on GPU
+        with wp.ScopedTimer("gizmo_kernel", print=False, active=True, dict=self.profiler):
+            wp.launch(
+                kernel=calculate_gizmo_transforms_kernel,
+                dim=self.num_envs,
+                inputs=[
+                    self.state.body_q,
+                    self.targets_wp,
+                    self.target_ori_wp,
+                    self.num_links,
+                    self.ee_link_index,
+                    self.ee_link_offset,
+                    self.num_envs,
+                    self.rot_x_axis_q_wp,
+                    self.rot_y_axis_q_wp,
+                    self.rot_z_axis_q_wp,
+                    cone_half_height
+                ],
+                outputs=[self.gizmo_pos_wp, self.gizmo_rot_wp],
+                device=self.config.device
+            )
 
-        rot_x_np = np.array(list(rot_x_axis), dtype=np.float32)
-        rot_y_np = np.array(list(rot_y_axis), dtype=np.float32)
-        rot_z_np = np.array(list(rot_z_axis), dtype=np.float32)
+        # Transfer results to CPU
+        gizmo_pos_np = self.gizmo_pos_wp.numpy()
+        gizmo_rot_np = self.gizmo_rot_wp.numpy()
 
-        current_body_q = self.state.body_q.numpy()
-
+        # Render gizmos using precomputed transforms
         for e in range(self.num_envs):
-            # --- Target Gizmos ---
-            target_pos_np = self.targets[e]
-            target_ori_np = self.target_ori[e]
+            base_idx = e * 6
+            # Target Gizmos
+            self.renderer.render_cone(name=f"target_x_{e}", pos=tuple(gizmo_pos_np[base_idx + 0]), rot=tuple(gizmo_rot_np[base_idx + 0]), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_x_target)
+            self.renderer.render_cone(name=f"target_y_{e}", pos=tuple(gizmo_pos_np[base_idx + 1]), rot=tuple(gizmo_rot_np[base_idx + 1]), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_y_target)
+            self.renderer.render_cone(name=f"target_z_{e}", pos=tuple(gizmo_pos_np[base_idx + 2]), rot=tuple(gizmo_rot_np[base_idx + 2]), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_z_target)
 
-            target_rot_x_np = quat_mul_np(target_ori_np, rot_x_np)
-            target_rot_y_np = quat_mul_np(target_ori_np, rot_y_np)
-            target_rot_z_np = quat_mul_np(target_ori_np, rot_z_np)
-
-            offset_x = apply_transform_np(np.zeros(3), target_rot_x_np, np.array([0, cone_half_height, 0]))
-            offset_y = apply_transform_np(np.zeros(3), target_rot_y_np, np.array([0, cone_half_height, 0]))
-            offset_z = apply_transform_np(np.zeros(3), target_rot_z_np, np.array([0, cone_half_height, 0]))
-
-            self.renderer.render_cone(name=f"target_x_{e}", pos=tuple(target_pos_np - offset_x), rot=tuple(target_rot_x_np), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_x_target)
-            self.renderer.render_cone(name=f"target_y_{e}", pos=tuple(target_pos_np - offset_y), rot=tuple(target_rot_y_np), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_y_target)
-            self.renderer.render_cone(name=f"target_z_{e}", pos=tuple(target_pos_np - offset_z), rot=tuple(target_rot_z_np), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_z_target)
-
-            # --- End-Effector Gizmos ---
-            if e * self.num_links + self.ee_link_index >= len(current_body_q):
-                 log.error(f"Index out of bounds accessing current_body_q for env {e}. Skipping EE gizmo.")
-                 continue # Skip this environment's EE gizmo if index is invalid
-
-            ee_link_transform_flat = current_body_q[e * self.num_links + self.ee_link_index]
-            ee_link_pos_np = ee_link_transform_flat[0:3]
-            ee_link_ori_np = ee_link_transform_flat[3:7]
-            ee_tip_pos_np = apply_transform_np(ee_link_pos_np, ee_link_ori_np, np.array(self.config.ee_link_offset)) # Use numpy offset
-
-            ee_rot_x_np = quat_mul_np(ee_link_ori_np, rot_x_np)
-            ee_rot_y_np = quat_mul_np(ee_link_ori_np, rot_y_np)
-            ee_rot_z_np = quat_mul_np(ee_link_ori_np, rot_z_np)
-
-            ee_offset_x = apply_transform_np(np.zeros(3), ee_rot_x_np, np.array([0, cone_half_height, 0]))
-            ee_offset_y = apply_transform_np(np.zeros(3), ee_rot_y_np, np.array([0, cone_half_height, 0]))
-            ee_offset_z = apply_transform_np(np.zeros(3), ee_rot_z_np, np.array([0, cone_half_height, 0]))
-
-            self.renderer.render_cone(name=f"ee_pos_x_{e}", pos=tuple(ee_tip_pos_np - ee_offset_x), rot=tuple(ee_rot_x_np), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_x_ee)
-            self.renderer.render_cone(name=f"ee_pos_y_{e}", pos=tuple(ee_tip_pos_np - ee_offset_y), rot=tuple(ee_rot_y_np), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_y_ee)
-            self.renderer.render_cone(name=f"ee_pos_z_{e}", pos=tuple(ee_tip_pos_np - ee_offset_z), rot=tuple(ee_rot_z_np), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_z_ee)
+            # End-Effector Gizmos
+            self.renderer.render_cone(name=f"ee_pos_x_{e}", pos=tuple(gizmo_pos_np[base_idx + 3]), rot=tuple(gizmo_rot_np[base_idx + 3]), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_x_ee)
+            self.renderer.render_cone(name=f"ee_pos_y_{e}", pos=tuple(gizmo_pos_np[base_idx + 4]), rot=tuple(gizmo_rot_np[base_idx + 4]), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_y_ee)
+            self.renderer.render_cone(name=f"ee_pos_z_{e}", pos=tuple(gizmo_pos_np[base_idx + 5]), rot=tuple(gizmo_rot_np[base_idx + 5]), radius=radius, half_height=cone_half_height, color=self.config.gizmo_color_z_ee)
 
     def render_error_bars(self):
         # TODO: implement error bar rendering if desired
@@ -626,35 +746,45 @@ def run_morph(config: MorphConfig) -> dict:
 
                 # --- Update Targets for New Rollout ---
                 with wp.ScopedTimer("target_update", print=False, active=True, dict=morph.profiler):
-                    morph.targets = morph.target_origin.copy()
-                    # Add positional noise
-                    pos_noise = morph.rng.uniform(-config.target_spawn_pos_noise / 2, config.target_spawn_pos_noise / 2, size=(morph.num_envs, 3))
-                    morph.targets += pos_noise
-
-                    # Add rotational noise
-                    target_orientations = np.empty((morph.num_envs, 4), dtype=np.float32)
-                    base_quat_np = np.array(list(morph.initial_arm_orientation), dtype=np.float32)
-                    for e in range(morph.num_envs):
-                        axis = morph.rng.uniform(-1, 1, size=3)
-                        angle = morph.rng.uniform(-config.target_spawn_rot_noise, config.target_spawn_rot_noise)
-                        random_rot_np = quat_from_axis_angle_np(axis, angle)
-                        # Apply random rotation relative to the base orientation
-                        target_orientations[e] = quat_mul_np(base_quat_np, random_rot_np)
-
-                    morph.target_ori = target_orientations
+                    # Update targets directly on GPU
+                    wp.launch(
+                        kernel=update_targets_kernel,
+                        dim=morph.num_envs,
+                        inputs=[
+                            wp.array(morph.target_origin, dtype=wp.vec3, device=morph.config.device), # Pass base origins
+                            morph.initial_arm_orientation, # Pass base orientation
+                            config.target_spawn_pos_noise,
+                            config.target_spawn_rot_noise,
+                            config.seed + i # Simple way to vary seed per rollout
+                        ],
+                        outputs=[
+                            morph.targets_wp, # Update the persistent Warp array
+                            morph.target_ori_wp # Update the persistent Warp array
+                        ],
+                        device=morph.config.device
+                    )
+                    # Update numpy arrays for compatibility with existing code
+                    morph.targets = morph.targets_wp.numpy()
+                    morph.target_ori = morph.target_ori_wp.numpy()
 
                 # --- Training Iterations within Rollout ---
                 for j in range(config.train_iters):
                     # 1. Calculate Error *before* the step for logging
                     ee_error_flat_wp = morph.compute_ee_error()
-                    ee_error_flat_np = ee_error_flat_wp.numpy() # Transfer for logging calculations
-                    error_reshaped_np = ee_error_flat_np.reshape(morph.num_envs, 6)
 
-                    # Calculate position error magnitude per env
-                    pos_err_mag = np.linalg.norm(error_reshaped_np[:, 0:3], axis=1)
+                    # Calculate error magnitudes on GPU
+                    with wp.ScopedTimer("error_mag_kernel", print=False, active=True, dict=morph.profiler):
+                        wp.launch(
+                            kernel=calculate_error_magnitudes_kernel,
+                            dim=morph.num_envs,
+                            inputs=[ee_error_flat_wp, morph.num_envs],
+                            outputs=[morph.ee_pos_err_mag_wp, morph.ee_ori_err_mag_wp],
+                            device=morph.config.device
+                        )
 
-                    # Calculate orientation error magnitude per env
-                    ori_err_mag = np.linalg.norm(error_reshaped_np[:, 3:6], axis=1)
+                    # Transfer error magnitudes to CPU for logging
+                    pos_err_mag = morph.ee_pos_err_mag_wp.numpy()
+                    ori_err_mag = morph.ee_ori_err_mag_wp.numpy()
 
                     # 2. Perform the actual IK step
                     morph.step() # This internally profiles _step

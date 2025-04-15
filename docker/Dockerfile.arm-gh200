@@ -13,6 +13,9 @@ COPY --from=ghcr.io/astral-sh/uv:0.5.1 /uv /uvx /bin/
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     git \
+    build-essential \
+    clang \
+    python3-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR $WARP_IK_ROOT
 RUN mkdir -p $WARP_IK_ROOT/warp_ik/morphs \

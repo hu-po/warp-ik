@@ -90,6 +90,14 @@ Use <space> to play and pause
 Use <alt>+<left click> to rotate the camera
 Use <ctrl>+<6> for geometry view
 
+to profile a morph, use NVIDIA Nsight Compute, requires installation [here](https://developer.nvidia.com/nsight-systems/get-started)
+
+```bash
+chmod +x ~/Downloads/NsightSystems-linux-public-2025.2.1.130-3569061.run
+sudo ~/Downloads/NsightSystems-linux-public-2025.2.1.130-3569061.run
+/opt/nvidia/nsight-systems/2025.2.1/bin/nsys profile --trace=cuda ./warp_ik/src/morph.py
+/opt/nvidia/nsight-systems/2025.2.1/bin/nsys viewer ./report1.nsys-rep
+```
 
 ```
 @misc{hupo2025warpik,
