@@ -15,11 +15,9 @@ class Morph(BaseMorph):
         Updates the configuration specific to the Template Morph.
 
         Sets a short training iteration count and defines the sleep duration
-        used in the `_step` method via `config_extras`. It also explicitly sets
-        `joint_q_requires_grad` to False as this morph doesn't use gradients.
+        used in the `_step` method via `config_extras`.
         """
         self.config.train_iters = 2 # Use a minimal number of iterations for this example
-        self.config.joint_q_requires_grad = False # No gradient needed for just sleeping
         # No step_size needed as no steps are taken
         self.config.config_extras = {
             "sleep_time": 0.01, # Duration to sleep in each step (seconds)

@@ -75,7 +75,6 @@ class Morph(BaseMorph):
         Sets the base learning rate, Adam hyperparameters (beta1, beta2, epsilon),
         and ensures gradients are enabled.
         """
-        self.config.joint_q_requires_grad = True # Gradients required for loss calculation
         # Use step_size as the base learning rate, or define a new config param
         self.config.step_size = 0.01 # Adam often needs smaller learning rates
         self.config.config_extras = {
@@ -108,9 +107,10 @@ class Morph(BaseMorph):
         # Record computation graph for the scalar loss
         with tape:
             ee_error_wp = self.compute_ee_error() # Shape (num_envs * 6)
-            # Calculate squared L2 norm (dot product with itself)
-            # Need to sum this over all environments and error dimensions for a scalar loss
-            loss = wp.sum(ee_error_wp * ee_error_wp)
+            # Calculate element-wise square of the error
+            squared_error = ee_error_wp * ee_error_wp
+            # Sum all elements of the squared error array to get a scalar loss
+            loss = wp.reduce_sum(squared_error)
 
         # Compute gradient of the total loss w.r.t. joint angles
         tape.backward(loss=loss)

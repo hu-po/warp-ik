@@ -23,7 +23,6 @@ class Morph(BaseMorph):
         method computes the Jacobian numerically.
         """
         self.config.step_size = 0.5 # Step size for joint angle updates
-        self.config.joint_q_requires_grad = False # Gradients not needed, Jacobian is computed numerically
         self.config.config_extras = {
             "eps": 1e-4, # Epsilon value for finite difference calculation
         }
@@ -82,5 +81,5 @@ class Morph(BaseMorph):
         self.model.joint_q = wp.array(
             q0 + delta_q.flatten(), # Apply update to original angles
             dtype=wp.float32,
-            requires_grad=self.config.joint_q_requires_grad, # Respect config setting
+            requires_grad=False, # gradients not needed, computed numerically
         )

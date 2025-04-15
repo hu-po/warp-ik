@@ -27,7 +27,9 @@ class Morph(BaseMorph):
         for joint angles, as this method relies on automatic differentiation.
         """
         self.config.step_size = 1.0 # Step size for joint angle updates
-        self.config.joint_q_requires_grad = True # Gradients required for autodiff
+        self.config.config_extras = {
+            "joint_q_requires_grad": True, # Gradients required for autodiff
+        }
 
     def _step(self):
         """
@@ -82,5 +84,5 @@ class Morph(BaseMorph):
         self.model.joint_q = wp.array(
             self.model.joint_q.numpy() + delta_q.flatten(),
             dtype=wp.float32,
-            requires_grad=self.config.joint_q_requires_grad, # Respect config setting
+            requires_grad=self.config.config_extras["joint_q_requires_grad"],
         )

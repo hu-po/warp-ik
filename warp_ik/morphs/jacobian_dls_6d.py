@@ -5,6 +5,23 @@ import time # For potential debug timing
 
 from warp_ik.src.morph import BaseMorph
 
+@wp.kernel
+def assign_jacobian_slice_kernel(
+    jacobians_out: wp.array(dtype=wp.float32, ndim=3), # Target: (num_envs, 6, dof)
+    gradient_in: wp.array(dtype=wp.float32, ndim=2),  # Source: (num_envs, dof)
+    dim_index: int, # The 'o' index (0 to 5) for the middle dimension
+    num_dof: int    # Needed to map thread index correctly
+):
+    # Map thread index to environment and DOF index
+    tid = wp.tid()
+    env_index = tid // num_dof # Integer division gives environment index
+    dof_index = tid % num_dof  # Modulo gives DOF index within the environment
+
+    # Assign the value from the source gradient array to the specific slice
+    # in the target jacobian array based on the calculated indices and the passed dim_index.
+    jacobians_out[env_index, dim_index, dof_index] = gradient_in[env_index, dof_index]
+
+
 class Morph(BaseMorph):
     """
     Inverse Kinematics Morph using Damped Least Squares (DLS) Jacobian.
@@ -33,9 +50,9 @@ class Morph(BaseMorph):
         DLS damping factor lambda to config_extras.
         """
         self.config.step_size = 1.0  # Step size (learning rate) for joint angle updates
-        self.config.joint_q_requires_grad = True # Gradients required for autodiff Jacobian
         self.config.config_extras = {
             "lambda": 0.1,  # Damping factor lambda
+            "joint_q_requires_grad": True, # Gradients required for autodiff Jacobian
         }
 
     def _step(self):
@@ -76,12 +93,23 @@ class Morph(BaseMorph):
             if q_grad_i: # Check if gradient exists
                 # Reshape the flat gradient array using the array's method
                 q_grad_reshaped = q_grad_i.reshape((self.num_envs, self.dof))
-                # Assign the reshaped gradient directly to the Jacobian slice
-                jacobians_wp[:, o, :] = q_grad_reshaped
+
+                # Launch the kernel to assign the reshaped gradient into the Jacobian slice
+                wp.launch(
+                    kernel=assign_jacobian_slice_kernel,
+                    dim=self.num_envs * self.dof, # Launch one thread per element to copy
+                    inputs=[
+                        jacobians_wp,     # The target Jacobian array (output)
+                        q_grad_reshaped,  # The source gradient data
+                        o,                # The specific dimension (0-5) to write into
+                        self.dof          # Pass dof for index calculation
+                    ],
+                    device=self.config.device
+                    # jacobians_wp is modified in-place as it's passed as input/output
+                )
             else:
-                # Handle case where gradient might be None (though unlikely here if q affects error)
                 log.warning(f"Gradient computation returned None for dimension {o} in DLS step.")
-                # jacobians_wp[:, o, :] remains zero from initialization
+            
             tape.zero()
         # end_jacobian_time = time.time()
         # print(f"Jacobian computation time: {end_jacobian_time - start_jacobian_time:.4f} s")
@@ -135,6 +163,6 @@ class Morph(BaseMorph):
         self.model.joint_q = wp.array(
             new_q,
             dtype=wp.float32,
-            requires_grad=self.config.joint_q_requires_grad,
+            requires_grad=self.config.config_extras["joint_q_requires_grad"],
             device=self.config.device
         )
