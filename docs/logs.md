@@ -74,6 +74,6 @@ git pull && ./scripts/test.sh
 test the morphs
 
 ```bash
-./scripts/test.morph.sh
+git pull && ./scripts/test.sh && ./scripts/test.morph.sh
 ```
 
