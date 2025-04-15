@@ -129,10 +129,10 @@ def quat_orientation_error(target: wp.quat, current: wp.quat) -> wp.vec3:
     """Computes 3D orientation error vector from target and current quaternions."""
     q_err = quat_mul(target, quat_conjugate(current))
     # Ensure scalar part is non-negative for consistency
-    qw = wp.select(q_err[3] < 0.0, -q_err[3], q_err[3])
-    qx = wp.select(q_err[3] < 0.0, -q_err[0], q_err[0])
-    qy = wp.select(q_err[3] < 0.0, -q_err[1], q_err[1])
-    qz = wp.select(q_err[3] < 0.0, -q_err[2], q_err[2])
+    qw = wp.where(q_err[3] < 0.0, -q_err[3], q_err[3])
+    qx = wp.where(q_err[3] < 0.0, -q_err[0], q_err[0])
+    qy = wp.where(q_err[3] < 0.0, -q_err[1], q_err[1])
+    qz = wp.where(q_err[3] < 0.0, -q_err[2], q_err[2])
     # Return axis * angle (scaled by 2), which is approx 2 * axis * sin(angle/2)
     # Magnitude is related to the angle error
     return wp.vec3(qx, qy, qz) * 2.0
