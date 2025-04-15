@@ -1,5 +1,6 @@
 #!/bin/bash
 ROOT_DIR="$(dirname "$(dirname "$0")")" # the warp-ik directory
+SEED=${1:-999}
 if [ -z "${BACKEND}" ]; then
     echo "Error: BACKEND environment variable is not set"
     exit 1
@@ -24,5 +25,5 @@ for MORPH_FILE in $MORPH_FILES; do
     warp-ik-$BACKEND bash -c "
     source /root/warp-ik/.venv/bin/activate && \
     source /root/warp-ik/.env && \
-    uv run python /root/warp-ik/warp_ik/src/morph.py --backend $BACKEND --morph $MORPH --track --headless --num_envs $NUM_ENVS"
+    uv run python /root/warp-ik/warp_ik/src/morph.py --backend $BACKEND --morph $MORPH --track --headless --num_envs $NUM_ENVS --seed $SEED"
 done
