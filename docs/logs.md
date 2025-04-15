@@ -59,17 +59,17 @@ when logging in fresh to each node, set the environment variables:
 
 ```bash
 export BACKEND="x86-3090"
-export NUM_ENVS=32
-
+export NUM_ENVS=64
+# ---
 export BACKEND="arm-agx"
-export NUM_ENVS=32
-
+export NUM_ENVS=64
+# ---
 export BACKEND="x86-meerkat"
 export NUM_ENVS=4
-
+# ---
 export BACKEND="arm-gh200"
-export NUM_ENVS=32
-
+export NUM_ENVS=128
+# ---
 export BACKEND="arm-rpi"
 export NUM_ENVS=4
 ```
@@ -83,6 +83,6 @@ git pull && ./scripts/test.sh
 test the morphs
 
 ```bash
-git pull && ./scripts/test.sh && ./scripts/test.morph.sh
+git pull && ./scripts/test.sh && ./scripts/test.morph.sh && ./scripts/run.morph.sh jacobian_geom_6d
 ```
 
