@@ -37,7 +37,7 @@ class MorphConfig:
     seed: int = 42 # random seed
     device: str = None # nvidia device to run the simulation on
     headless: bool = False # turns off rendering
-    num_envs: int = 16 # number of parallel environments
+    num_envs: int = 4 # number of parallel environments
     num_rollouts: int = 2 # number of rollouts to perform
     train_iters: int = 64 # number of training iterations per rollout
     track: bool = False # turns on tracking with wandb
@@ -245,7 +245,7 @@ class BaseMorph:
             self.wandb_run = wandb.init(
                 entity=self.config.wandb_entity,
                 project=self.config.wandb_project,
-                name=f"{self.config.dockerfile}/{self.config.morph}",
+                name=f"{self.config.backend}/{self.config.morph}",
                 config=config_dict
             )
             self.wandb_run.save(config_filepath)
@@ -745,7 +745,7 @@ def run_morph(config: MorphConfig) -> dict:
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dockerfile", type=str, default=MorphConfig.dockerfile, help="Override default dockerfile variant.")
+    parser.add_argument("--backend", type=str, default=MorphConfig.backend, help="Override default compute backend variant.")
     parser.add_argument("--headless", action='store_true', help="Run in headless mode.")
     parser.add_argument("--track", action='store_true', help="Turn on tracking with wandb.")
     parser.add_argument("--morph", type=str, default=MorphConfig.morph, help="Unique identifier for the morph.")
@@ -758,7 +758,7 @@ if __name__ == "__main__":
     config = MorphConfig(
         morph=args.morph,
         device=args.device,
-        dockerfile=args.dockerfile,
+        backend=args.backend,
         headless=args.headless,
         track=args.track,
         seed=args.seed,

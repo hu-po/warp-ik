@@ -64,7 +64,7 @@ def mutate(config: MutateConfig, protomorph: ActiveMorph) -> ActiveMorph:
         log.info("\t\t🍯 adding glazing prompt...")
         glazing_prompt_filepath = os.path.join(config.prompts_dir, "glazing.txt")
         prompt += f"\n\n{load_prompt(config, glazing_prompt_filepath)}"
-    # TODO: add spec based on dockerfile
+    # TODO: add spec based on backend
     if random.random() < config.proc_helpdocs_prompt:
         log.info("\t\t📋 adding documentation prompt...")
         # TODO: randomly choose and add one of the following pages of documentation
