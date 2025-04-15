@@ -7,7 +7,7 @@ if [ -z "${BACKEND}" ]; then
     exit 1
 fi
 
-MORPH=$1
+MORPH=${1:-template}
 docker build -f docker/Dockerfile.$BACKEND -t warp-ik-$BACKEND .
 docker run --gpus all -it --rm --user="root" \
 -v $ROOT_DIR/output:/root/warp-ik/output \
