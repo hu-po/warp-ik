@@ -71,7 +71,7 @@ export BACKEND="arm-gh200"
 export NUM_ENVS=128
 # ---
 export BACKEND="arm-rpi"
-export NUM_ENVS=4
+export NUM_ENVS=2
 ```
 
 test the backend
@@ -86,3 +86,8 @@ test the morphs
 git pull && ./scripts/test.sh && ./scripts/test.morph.sh && ./scripts/run.morph.sh jacobian_geom_6d
 ```
 
+run all morphs
+
+```bash
+git pull && ./scripts/test.sh && ./scripts/run.morph.all.sh
+```

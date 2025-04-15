@@ -27,7 +27,7 @@ def add_delta_q_kernel(
     out_joint_q: wp.array(dtype=wp.float32)
 ):
     tid = wp.tid()
-    out_joint_q[tid] = joint_q[tid] + delta_q[tid]
+    out_joint_q[tid] = joint_q[tid] - delta_q[tid]
 
 class Morph(BaseMorph):
     """

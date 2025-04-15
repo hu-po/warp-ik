@@ -1,9 +1,20 @@
-# warp_ik/morphs/optim_adam_6d.py
 import warp as wp
 import numpy as np
 import logging as log
 
 from warp_ik.src.morph import BaseMorph
+
+@wp.kernel
+def clip_gradients_kernel(
+    grad_q: wp.array(dtype=wp.float32),
+    max_norm: float
+):
+    """Clips gradients element-wise if their norm exceeds max_norm."""
+    tid = wp.tid()
+    grad_val = grad_q[tid]
+    grad_norm = wp.sqrt(grad_val * grad_val)
+    if grad_norm > max_norm:
+        grad_q[tid] = (grad_val / grad_norm) * max_norm
 
 @wp.kernel
 def adam_update_kernel(
@@ -62,18 +73,6 @@ def sum_reduce_kernel(
     wp.atomic_add(output_arr, 0, input_arr[tid])
 
 class Morph(BaseMorph):
-    """
-    Inverse Kinematics Morph using Adam Optimization.
-
-    This morph frames IK as minimizing the squared 6D pose error magnitude.
-    It computes the gradient of this scalar loss with respect to the joint
-    angles `q` using Warp's autodifferentiation (`wp.Tape`).
-
-    The joint angles are then updated using the Adam optimization algorithm,
-    which maintains adaptive learning rates for each parameter based on
-    estimates of first and second moments of the gradients.
-    """
-
     def __init__(self, config):
         """Initializes the Adam morph, including optimizer state."""
         super().__init__(config)  # Call BaseMorph init first
@@ -89,12 +88,13 @@ class Morph(BaseMorph):
         """
         Updates the configuration specific to the Adam Optimization Morph.
         """
-        self.config.step_size = 0.01  # Base learning rate
+        self.config.step_size = 1e-2  # Base learning rate
         self.config.joint_q_requires_grad = True
         self.config.config_extras = {
             "beta1": 0.9,      # Exponential decay rate for first moment
             "beta2": 0.999,    # Exponential decay rate for second moment
             "epsilon": 1e-8,   # Small constant for numerical stability
+            "max_grad_norm": 1.0,  # Maximum gradient norm for clipping
         }
 
     def _step(self):
@@ -131,7 +131,7 @@ class Morph(BaseMorph):
             )
 
             # Reduce to scalar loss
-            scalar_loss = wp.zeros(1, dtype=wp.float32, device=self.config.device)
+            scalar_loss = wp.zeros(1, dtype=wp.float32, device=self.config.device, requires_grad=True)
             wp.launch(
                 sum_reduce_kernel,
                 dim=squared_error.shape[0],
@@ -147,8 +147,17 @@ class Morph(BaseMorph):
             if grad_q is None:
                 log.warning("No gradients found for joint_q")
                 return
+            else:
+                # Apply gradient clipping
+                max_grad_norm = self.config.config_extras["max_grad_norm"]
+                wp.launch(
+                    clip_gradients_kernel,
+                    dim=grad_q.shape[0],
+                    inputs=[grad_q, max_grad_norm],
+                    device=self.config.device
+                )
         except Exception as e:
-            log.error(f"Error in backward pass: {e}")
+            log.error(f"Error in backward pass: {e}", exc_info=True)
             return
 
         # Create output array for updated joint angles
@@ -178,4 +187,4 @@ class Morph(BaseMorph):
         )
 
         # Update joint angles
-        self.model.joint_q.assign(q_new)
+        self.model.joint_q.assign(q_new) 
