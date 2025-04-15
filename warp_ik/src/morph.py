@@ -35,7 +35,7 @@ class MorphConfig:
     morph_dir: str = f"{root_dir}/warp_ik/morphs" # directory for the morphs
     morph_output_dir: str = f"{output_dir}/{morph}" # output directory for this unique morph
     seed: int = 42 # random seed
-    device: str = None # nvidia device to run the simulation on
+    device: str = os.environ.get("DEVICE", None) # nvidia device to run the simulation on
     headless: bool = False # turns off rendering
     num_envs: int = os.environ.get("NUM_ENVS", 2) # number of parallel environments
     num_rollouts: int = 2 # number of rollouts to perform
