@@ -20,4 +20,4 @@ docker run $GPU_FLAG -it --rm --user="root" \
 warp-ik-$BACKEND bash -c "
 source /root/warp-ik/.venv/bin/activate && \
 source /root/warp-ik/.env && \
-uv run python /root/warp-ik/warp_ik/src/morph.py --backend $BACKEND --morph $MORPH --track --headless --num_envs $NUM_ENVS"
+uv run python /root/warp-ik/warp_ik/src/morph.py --backend $BACKEND --morph $MORPH --num_envs $NUM_ENVS"

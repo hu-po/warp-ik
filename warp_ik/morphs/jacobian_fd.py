@@ -6,7 +6,7 @@ from warp_ik.src.morph import BaseMorph
 
 @wp.kernel
 def jacobian_transpose_multiply_kernel(
-    jacobians: wp.array(dtype=wp.float32),  # Shape: (num_envs, 6, dof)
+    jacobians: wp.array3d(dtype=wp.float32),  # Shape: (num_envs, 6, dof)
     error: wp.array(dtype=wp.float32),      # Shape: (num_envs * 6)
     alpha: float,                           # Step size
     num_envs: int,
