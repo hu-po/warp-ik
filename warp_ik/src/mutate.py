@@ -85,9 +85,13 @@ async def reply_to_morph_async(reply: str, name: str, output_morph_dir: str, deb
 
     # Process the reply
     processed_reply = reply
+    # Remove <think> sections (used by replicate model)
+    processed_reply = re.sub(r'<think>.*?</think>', '', processed_reply, flags=re.DOTALL)
     processed_reply = re.sub(r'^```python\s*', '', processed_reply, flags=re.MULTILINE)
     processed_reply = re.sub(r'\n```$', '', processed_reply, flags=re.MULTILINE)
     processed_reply = re.sub(r'^```$', '', processed_reply, flags=re.MULTILINE)
+    # Remove any leading/trailing whitespace after processing
+    processed_reply = processed_reply.strip()
 
     # Save processed reply to debug directory
     try:
