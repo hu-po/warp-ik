@@ -35,22 +35,23 @@ def add_delta_q_kernel(
 
 class Morph(BaseMorph):
     """
-    Inverse Kinematics Morph using Forward Difference Jacobian (Improved Efficiency).
+    Inverse Kinematics Morph using Finite Difference Jacobian (Forward Difference).
 
     This morph implements an IK solver that approximates the 6D (position + orientation)
     end-effector Jacobian using numerical *forward* differences. It perturbs each joint angle
-    positively, observes the change in the end-effector pose error (computed by the base class),
-    and uses this information to estimate the Jacobian matrix. The joint angles are then
-    updated iteratively using the Jacobian transpose method to minimize the pose error.
+    slightly in the positive direction, observes the change in the end-effector pose error
+    (computed by the base class), and uses this information to estimate the Jacobian matrix.
+    The joint angles are then updated iteratively using the Jacobian transpose method
+    to minimize the pose error.
 
-    Compared to the central difference approach, this reduces the number of required
-    error computations per step by half, potentially improving performance at the cost
-    of slightly lower theoretical accuracy for the Jacobian approximation.
+    This version uses forward difference instead of central difference to improve
+    computational efficiency by reducing the number of required forward kinematics
+    evaluations by approximately half.
     """
 
     def _update_config(self):
         """
-        Updates the configuration specific to the Forward Difference Jacobian Morph.
+        Updates the configuration specific to the Finite Difference Jacobian Morph.
 
         Sets the step size for joint updates, the epsilon value for finite difference
         calculations, and ensures gradients are disabled for joint angles, as this
@@ -64,7 +65,7 @@ class Morph(BaseMorph):
 
     def _step(self):
         """
-        Performs one IK step using the Forward Difference Jacobian method.
+        Performs one IK step using the Forward Finite Difference Jacobian method.
 
         It approximates the Jacobian matrix J by perturbing each joint angle q_i
         by +epsilon, computing the resulting end-effector pose error, and using
@@ -76,51 +77,50 @@ class Morph(BaseMorph):
         The computed delta_q is then added to the current joint angles.
         """
         # Get initial error and joint angles
-        ee_error_flat_wp = self.compute_ee_error() # Error at current q0
-        ee_error_flat_initial_np = ee_error_flat_wp.numpy().copy()
-        q0_np = self.model.joint_q.numpy().copy()
+        ee_error_flat_wp = self.compute_ee_error() # This computes error(q)
+        ee_error_flat_initial = ee_error_flat_wp.numpy().copy() # error(q) as numpy array
+        q0 = self.model.joint_q.numpy().copy()
         eps = self.config.config_extras["eps"]
 
-        # Initialize Jacobian on CPU (to be filled)
-        jacobians_np = np.zeros((self.num_envs, 6, self.dof), dtype=np.float32)
+        # Initialize Jacobian on CPU (will be transferred to GPU later)
+        jacobians = np.zeros((self.num_envs, 6, self.dof), dtype=np.float32)
+
+        # Pre-allocate q_perturbed array for efficiency
+        q_perturbed = q0.copy()
 
         # Compute Jacobian using forward differences
-        # Create a mutable copy for perturbations
-        q_perturbed_np = q0_np.copy()
-        q_perturbed_wp = wp.array(q_perturbed_np, dtype=wp.float32, device=self.config.device)
-
         for e in range(self.num_envs):
-            # Get the initial error slice for this environment
-            f0_e = ee_error_flat_initial_np[e * 6:(e + 1) * 6]
+            # Get the initial error for this specific environment
+            f0_e = ee_error_flat_initial[e * 6:(e + 1) * 6]
 
             for i in range(self.dof):
-                # Perturb positive
-                original_qi = q_perturbed_np[e * self.dof + i] # Store original value
-                q_perturbed_np[e * self.dof + i] += eps
-                q_perturbed_wp.assign(q_perturbed_np) # Update GPU array
+                joint_index = e * self.dof + i
 
-                # Compute error at perturbed state
-                f_plus_wp = self.compute_ee_error()
-                f_plus_e = f_plus_wp.numpy()[e * 6:(e + 1) * 6] # Get slice for env e
+                # Restore original joint angle before perturbation
+                q_perturbed[joint_index] = q0[joint_index]
+
+                # Perturb positive
+                q_perturbed[joint_index] += eps
+                self.model.joint_q.assign(wp.array(q_perturbed, dtype=wp.float32, device=self.config.device))
+                f_plus_e = self.compute_ee_error().numpy()[e * 6:(e + 1) * 6].copy() # error(q + eps_i)
+
+                # Restore original joint angle after perturbation to avoid accumulation
+                q_perturbed[joint_index] = q0[joint_index]
 
                 # Compute column of Jacobian using forward difference
-                jacobians_np[e, :, i] = (f_plus_e - f0_e) / eps
+                jacobians[e, :, i] = (f_plus_e - f0_e) / eps
 
-                # Restore original joint angle in numpy array for next iteration
-                q_perturbed_np[e * self.dof + i] = original_qi
-
-        # Restore original joint angles in the model state *after* Jacobian computation
-        # The model's joint_q should be q0 when calculating delta_q = -alpha * J^T * error(q0)
-        self.model.joint_q.assign(wp.array(q0_np, dtype=wp.float32, device=self.config.device))
+        # Restore original joint angles for all envs before applying update
+        self.model.joint_q.assign(wp.array(q0, dtype=wp.float32, device=self.config.device))
 
         # Transfer Jacobian to GPU
-        jacobians_wp = wp.array(jacobians_np, dtype=wp.float32, device=self.config.device)
+        jacobians_wp = wp.array(jacobians, dtype=wp.float32, device=self.config.device)
 
         # Initialize delta_q on GPU
         delta_q_wp = wp.zeros(self.num_envs * self.dof, dtype=wp.float32, device=self.config.device)
 
         # Compute joint updates using Jacobian transpose method on GPU
-        # Note: Uses ee_error_flat_wp which is the error evaluated at the *start* of the step (at q0)
+        # Use the initial error (error(q)) for the update calculation
         wp.launch(
             jacobian_transpose_multiply_kernel,
             dim=self.num_envs * self.dof,
@@ -133,7 +133,7 @@ class Morph(BaseMorph):
         wp.launch(
             add_delta_q_kernel,
             dim=self.num_envs * self.dof,
-            inputs=[self.model.joint_q, delta_q_wp], # Input is current q0
-            outputs=[self.model.joint_q], # Output is q0 + delta_q
+            inputs=[self.model.joint_q, delta_q_wp],
+            outputs=[self.model.joint_q],
             device=self.config.device
         )
