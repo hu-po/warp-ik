@@ -869,10 +869,10 @@ def run_morph(config: MorphConfig) -> dict:
             final_ori_error = np.mean(ori_err_mag)
             # Adding 1 to denominator prevents division by zero and keeps score positive
             denominator = 1.0 + final_pos_error + final_ori_error
-            accuracy_score = 1.0 / denominator if denominator > 1e-6 else 0.0
+            score = 1.0 / denominator if denominator > 1e-6 else 0.0
         except (NameError, ValueError) as e:
             log.warning(f"Could not calculate accuracy score: {e}")
-            accuracy_score = 0.0
+            score = 0.0
 
         # Store final metrics in results
         results.update({
@@ -882,7 +882,7 @@ def run_morph(config: MorphConfig) -> dict:
             "final_ori_error_mean": float(np.mean(ori_err_mag)),
             "final_ori_error_min": float(np.min(ori_err_mag)),
             "final_ori_error_max": float(np.max(ori_err_mag)),
-            "accuracy_score": float(accuracy_score),
+            "score": float(score),
             # Add key config parameters
             "config_num_envs": morph.config.num_envs,
             "config_device": str(morph.config.device),
@@ -901,7 +901,7 @@ def run_morph(config: MorphConfig) -> dict:
                 "final/ori_error_mean": results["final_ori_error_mean"],
                 "final/ori_error_min": results["final_ori_error_min"],
                 "final/ori_error_max": results["final_ori_error_max"],
-                "final/accuracy_score": results["accuracy_score"],
+                "final/score": results["score"],
                 "final/total_steps": results["total_steps"],
                 "final/total_env_steps": results["total_env_steps"]
             }

@@ -28,8 +28,8 @@ log.setLevel(logging.INFO)
 class EvolveConfig:
     seed: int = 42 # random seed
     num_rounds: int = 3 # number of rounds of evolution (mutation + elimination)
-    num_morphs: int = 6 # desired size of the population of morphs (may overshoot slightly)
-    topk_morphs: int = 2 # number of top morphs to keep each round
+    num_morphs: int = 20 # desired size of the population of morphs (may overshoot slightly)
+    topk_morphs: int = 10 # number of top morphs to keep each round
     mutate_on_start: bool = False # whether to mutate protomorphs at the start
     backend: str = os.environ.get("BACKEND", "x86-meerkat") # Default if not set
     root_dir: str = os.environ.get("WARP_IK_ROOT")
@@ -48,6 +48,13 @@ class EvolveConfig:
         self.morph_dir = os.path.join(self.root_dir, "warp_ik", "morphs")
         # Ensure base output dir exists
         os.makedirs(self.output_dir, exist_ok=True)
+
+def get_available_morphs(morph_dir: str) -> List[str]:
+    """Returns a list of available morph names from the morphs directory."""
+    if not os.path.exists(morph_dir):
+        return []
+    return [os.path.splitext(f)[0] for f in os.listdir(morph_dir) 
+            if f.endswith('.py') and os.path.isfile(os.path.join(morph_dir, f))]
 
 def run_morph_subprocess(config: EvolveConfig, morph: ActiveMorph) -> float:
     """Runs a single morph simulation using subprocess and returns its score."""
@@ -96,8 +103,8 @@ def run_morph_subprocess(config: EvolveConfig, morph: ActiveMorph) -> float:
         try:
             with open(results_filepath, "r") as f:
                 morph_output = json.load(f) # results.json should be JSON
-            # Use 'accuracy_score' which is 1 / (1 + pos_err + ori_err) - higher is better
-            score = morph_output.get("accuracy_score", 0.0)
+            # Use 'score' which is 1 / (1 + pos_err + ori_err) - higher is better
+            score = morph_output.get("score", 0.0)
             if not isinstance(score, (float, int)):
                  log.warning(f"\t⚠️ Invalid score type ({type(score)}) found for {morph.name}, using 0.0.")
                  score = 0.0
@@ -108,7 +115,7 @@ def run_morph_subprocess(config: EvolveConfig, morph: ActiveMorph) -> float:
             log.error(f"\t❌\tFailed to decode results JSON for {morph.name} at {results_filepath}")
             morph.state = MorphState.ERRORED_OUT
         except KeyError:
-            log.error(f"\t❌\t'accuracy_score' key not found in results for {morph.name}")
+            log.error(f"\t❌\t'score' key not found in results for {morph.name}")
             morph.state = MorphState.ERRORED_OUT
         except Exception as e:
              log.error(f"\t❌\tError reading results file for {morph.name}: {e}")
@@ -133,7 +140,20 @@ async def evolve_async(config: EvolveConfig):
 
     # --- Initialize Population ---
     morphs: List[ActiveMorph] = []
-    protomorph_names = [p.strip() for p in config.protomorphs_str.split(",") if p.strip()]
+    
+    # Handle "all" case for protomorphs
+    if config.protomorphs_str.strip().lower() == "all":
+        available_morphs = get_available_morphs(config.morph_dir)
+        if not available_morphs:
+            log.error("No morphs found in morphs directory. Aborting evolution.")
+            return
+        # Randomly select num_morphs from available morphs
+        selected_morphs = random.sample(available_morphs, min(config.num_morphs, len(available_morphs)))
+        protomorph_names = selected_morphs
+        log.info(f"Selected {len(selected_morphs)} random morphs from {len(available_morphs)} available morphs")
+    else:
+        protomorph_names = [p.strip() for p in config.protomorphs_str.split(",") if p.strip()]
+    
     log.info("Loading protomorphs:")
     for name in protomorph_names:
         morph_path = os.path.join(config.morph_dir, f"{name}.py")
