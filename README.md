@@ -56,13 +56,13 @@ run a morph by name, e.g. `jacobian_geom_6d`:
 start the evolutionary process using protomorphs `jacobian_geom_3d,jacobian_geom_6d`:
 
 ```bash
-./scripts/run.evolve.sh jacobian_geom_3d,jacobian_geom_6d
+./scripts/evolve.sh jacobian_geom_3d,jacobian_geom_6d
 ```
 
-create a mutation of a morph, check the output in `warp_ik/morphs/` folder:
+create a mutation of a morph, check the output in `warp_ik/src/morphs/` folder:
 
 ```bash
-./scripts/run.mutate.sh jacobian_geom_3d
+./scripts/mutate.sh jacobian_geom_3d
 ```
 
 clean out the output directory:

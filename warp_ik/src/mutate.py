@@ -128,13 +128,21 @@ async def mutate_async(config: MutateConfig, protomorph: ActiveMorph) -> List[Ac
     log.info(f"🧫 Mutating protomorph: {protomorph.name} using models: {config.enabled_models}")
 
     # --- Load Prompts ---
-    mutation_prompt_filepath = os.path.join(config.prompts_dir, "mutate.txt")
+    # Get all .txt files from the prompts directory
+    prompt_files = [f for f in os.listdir(config.prompts_dir) if f.endswith('.txt')]
+    if not prompt_files:
+        log.error(f"No .txt prompt files found in {config.prompts_dir}")
+        return []
+    
+    # Randomly select one prompt file
+    selected_prompt_file = random.choice(prompt_files)
+    prompt_filepath = os.path.join(config.prompts_dir, selected_prompt_file)
     protomorph_filepath = os.path.join(config.morph_dir, f"{protomorph.name}.py")
 
     try:
-        base_prompt_task = load_prompt_async(mutation_prompt_filepath)
+        prompt_task = load_prompt_async(prompt_filepath)
         morph_code_task = morph_to_prompt_async(protomorph_filepath)
-        base_prompt, morph_code = await asyncio.gather(base_prompt_task, morph_code_task)
+        prompt, morph_code = await asyncio.gather(prompt_task, morph_code_task)
     except Exception as e:
         log.error(f"Failed to load necessary files for mutation: {e}")
         return []
@@ -143,36 +151,33 @@ async def mutate_async(config: MutateConfig, protomorph: ActiveMorph) -> List[Ac
         log.error(f"Protomorph code for {protomorph.name} is empty or could not be read. Aborting mutation.")
         return []
 
-    # --- Construct Final Prompt ---
+    # --- Construct Prompts for Each Model ---
     random.seed(config.seed) # Seed for reproducible randomization if needed later
-    final_prompt = base_prompt
-
-    # Replace placeholder in the mutation prompt
-    final_prompt = final_prompt.replace("{{MORPH_CODE_PLACEHOLDER}}", morph_code)
-
-    # --- Save the final prompt used for this mutation ---
-    final_prompt_filepath = os.path.join(config.output_dir, f"mutation_prompt_{protomorph.name}.txt")
-    try:
-        async with aiofiles.open(final_prompt_filepath, "w", encoding="utf-8") as f:
-            await f.write(final_prompt)
-        log.info(f"Saved final mutation prompt to {final_prompt_filepath}")
-    except Exception as e:
-        log.error(f"Failed to save final mutation prompt: {e}")
-
+    model_prompts = {}
+    for model in config.enabled_models:
+        final_prompt = prompt.replace("{{MORPH_CODE_PLACEHOLDER}}", morph_code)
+        model_prompts[model] = final_prompt
+        # Optionally, save the prompt used for each model
+        final_prompt_filepath = os.path.join(config.output_dir, f"mutation_prompt_{protomorph.name}_{model}.txt")
+        try:
+            async with aiofiles.open(final_prompt_filepath, "w", encoding="utf-8") as f:
+                await f.write(final_prompt)
+            log.info(f"Saved final mutation prompt for {model} to {final_prompt_filepath}")
+        except Exception as e:
+            log.error(f"Failed to save final mutation prompt for {model}: {e}")
 
     # --- Call AI Models ---
-    # async_inference expects an image path, but we don't have one here.
-    # Modify async_inference or create a text-only version if needed.
-    # For now, pass None, assuming async_inference handles it gracefully.
-    # Let's assume ai.py's async_inference needs image_path=None kwarg
-    log.info(f"🧬 Calling AI models ({', '.join(config.enabled_models)}) for novel algorithms...")
-    replies: Dict[str, str] = await async_inference(
-        prompt=final_prompt,
-        image_path=None, # No image needed for code generation
-        enabled_models=config.enabled_models,
-        # Use a potentially longer timeout for complex code generation
-        timeout=AIConfig().timeout_analysis # Or define a specific mutation timeout
-    )
+    log.info(f"🧬 Calling AI models ({', '.join(config.enabled_models)}) for novel or improved algorithms...")
+    # Call each model with its own prompt
+    inference_tasks = [async_inference(
+        prompt=model_prompts[model],
+        image_path=None,
+        enabled_models=[model],
+        timeout=AIConfig().timeout_analysis
+    ) for model in config.enabled_models]
+    replies_list = await asyncio.gather(*inference_tasks)
+    # replies_list is a list of dicts with one key each
+    replies = {model: reply_dict.get(model, "") for model, reply_dict in zip(config.enabled_models, replies_list)}
 
     # --- Process Replies and Create Neomorphs ---
     neomorphs: List[ActiveMorph] = []
