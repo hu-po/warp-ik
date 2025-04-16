@@ -28,10 +28,6 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class AIConfig:
-    timeout_analysis: int = 600  # seconds
-    timeout_model_api: int = 300 # seconds
-    api_max_retries: int = 1
-    max_tokens: int = int(1e4)
     enabled_models: List[str] = field(default_factory=lambda: ["gpt", "claude", "gemini", "xapi", "replicate"])
     # https://docs.anthropic.com/en/docs/about-claude/models/all-models
     claude_model: str = "claude-3-7-sonnet-20250219"
@@ -43,7 +39,10 @@ class AIConfig:
     xai_model: str = "grok-3"
     # https://replicate.com/deepseek-ai/deepseek-r1
     replicate_model: str = "deepseek-ai/deepseek-r1"
-    prompt_default: str = "describe this image in as much detail as possible"
+    max_tokens: int = int(1e4)
+    api_max_retries: int = 1
+    timeout_model_api: int = 600 # seconds (this is high because of reasoning models)
+    timeout_analysis: int = 900  # seconds
 
 config = AIConfig()
 
@@ -221,7 +220,7 @@ async def async_gemini(prompt: str, image_path: str = None) -> str:
 
         response = await model.generate_content_async(
             content,
-            request_options={"timeout": 540},  # 9 minutes, less than timeout_analysis
+            request_options={"timeout": config.timeout_model_api},
             generation_config={"max_output_tokens": config.max_tokens},
         )
         response = response.text
@@ -281,7 +280,6 @@ async def async_inference(
     prompt: str,
     image_path: str,
     enabled_models: List[str] = config.enabled_models,
-    timeout: int = config.timeout_analysis,
 ) -> Dict[str, str]:
     log.debug("Starting AI analysis")
     try:
@@ -308,10 +306,10 @@ async def async_inference(
         try:
             responses = await asyncio.wait_for(
                 asyncio.gather(*tasks, return_exceptions=True),
-                timeout=timeout,
+                timeout=config.timeout_analysis,
             )
         except asyncio.TimeoutError:
-            _msg = f"Analysis timed out after {timeout} seconds"
+            _msg = f"Analysis timed out after {config.timeout_analysis} seconds"
             log.error(_msg)
             return {"error": _msg}
 
@@ -353,14 +351,23 @@ def inference(prompt: str, models: List[str] = config.enabled_models, image_path
 
 async def async_test_model_apis() -> None:
     log.info(f"Testing enabled models: {config.enabled_models}")
+    results = []
     for model_name in config.enabled_models:
         try:
             log.info(f"Testing {model_name}")
             prompt = "ur favorite emoji"
             response = await AI_MODEL_MAP[model_name](prompt)
-            log.info(f"{model_name.upper()} Response: {response}")
+            log.info(f"\treply:\n{response}\n")
+            results.append(f"✅ {model_name.upper()}")
         except Exception as e:
             log.error(f"Error testing {model_name}: {str(e)}")
+            results.append(f"❌ {model_name.upper()}: {str(e)}")
+    
+    # Print summary
+    log.info("\n=== Model Test Results ===")
+    for result in results:
+        log.info(result)
+    log.info("=====================")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run AI model tests or analyze images")

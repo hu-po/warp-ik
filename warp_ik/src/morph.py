@@ -25,6 +25,7 @@ log.setLevel(logging.INFO)
 
 @dataclass
 class MorphConfig:
+    seed: int = 42 # random seed
     morph: str = 'template' # unique identifier for the morph (when testing use "blank" morph)
     backend: str = os.environ.get("BACKEND") # compute backend variant
     root_dir: str = os.environ.get("WARP_IK_ROOT") # root directory of the warp-ik project
@@ -32,7 +33,6 @@ class MorphConfig:
     output_dir: str = f"{root_dir}/output" # output directory for the morphs
     morph_dir: str = f"{root_dir}/warp_ik/morphs" # directory for the morphs
     morph_output_dir: str = f"{output_dir}/{morph}" # output directory for this unique morph
-    seed: int = 42 # random seed
     device: str = os.environ.get("DEVICE", None) # nvidia device to run the simulation on
     headless: bool = False # turns off rendering
     num_envs: int = os.environ.get("NUM_ENVS", 4) # number of parallel environments

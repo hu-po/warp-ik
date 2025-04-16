@@ -26,8 +26,8 @@ log.setLevel(logging.INFO)
 
 @dataclass
 class EvolveConfig:
-    seed: int = 33
-    num_rounds: int = 12 # number of rounds of evolution (mutation + elimination)
+    seed: int = 42 # random seed
+    num_rounds: int = 2 # number of rounds of evolution (mutation + elimination)
     num_morphs: int = 12 # desired size of the population of morphs (may overshoot slightly)
     topk_morphs: int = 6 # number of top morphs to keep each round
     mutate_on_start: bool = False # whether to mutate protomorphs at the start
@@ -64,6 +64,7 @@ def run_morph_subprocess(config: EvolveConfig, morph: ActiveMorph) -> float:
         "--morph", morph.name,
         "--backend", config.backend,
         "--num_envs", str(config.num_envs),
+        "--seed", str(config.seed),
     ]
     if config.track_morphs:
         command.append("--track")
@@ -332,7 +333,6 @@ async def main():
         num_envs=args.num_envs,
         track_morphs=not args.no_track,
         headless_morphs=not args.render,
-        # root_dir is automatically picked up from env var
     )
 
     await evolve_async(config)
