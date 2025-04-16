@@ -173,7 +173,6 @@ async def mutate_async(config: MutateConfig, protomorph: ActiveMorph) -> List[Ac
         prompt=model_prompts[model],
         image_path=None,
         enabled_models=[model],
-        timeout=AIConfig().timeout_analysis
     ) for model in config.enabled_models]
     replies_list = await asyncio.gather(*inference_tasks)
     # replies_list is a list of dicts with one key each

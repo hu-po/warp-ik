@@ -27,9 +27,9 @@ log.setLevel(logging.INFO)
 @dataclass
 class EvolveConfig:
     seed: int = 42 # random seed
-    num_rounds: int = 2 # number of rounds of evolution (mutation + elimination)
-    num_morphs: int = 12 # desired size of the population of morphs (may overshoot slightly)
-    topk_morphs: int = 6 # number of top morphs to keep each round
+    num_rounds: int = 3 # number of rounds of evolution (mutation + elimination)
+    num_morphs: int = 6 # desired size of the population of morphs (may overshoot slightly)
+    topk_morphs: int = 2 # number of top morphs to keep each round
     mutate_on_start: bool = False # whether to mutate protomorphs at the start
     backend: str = os.environ.get("BACKEND", "x86-meerkat") # Default if not set
     root_dir: str = os.environ.get("WARP_IK_ROOT")
