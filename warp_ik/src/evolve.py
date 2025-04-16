@@ -33,7 +33,7 @@ class EvolveConfig:
     mutate_on_start: bool = False # whether to mutate protomorphs at the start
     backend: str = os.environ.get("BACKEND", "x86-meerkat") # Default if not set
     root_dir: str = os.environ.get("WARP_IK_ROOT")
-    protomorphs_str: str = os.environ.get("PROTOMORPHS", "jacobian_geom_6d,jacobian_fd") # comma separated list
+    protomorphs_str: str = os.environ.get("PROTOMORPHS", "ik_geom_6d,ik_fd_6d") # comma separated list
     output_dir: str = field(init=False)
     morph_dir: str = field(init=False)
     enabled_models: List[str] = field(default_factory=lambda: AIConfig().enabled_models) # Models for mutation

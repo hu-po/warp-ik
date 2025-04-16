@@ -1,6 +1,6 @@
 #!/bin/bash
 ROOT_DIR="$(dirname "$(dirname "$0")")" # the warp-ik directory
-PROTOMORPHS=${1:-jacobian_geom_6d,jacobian_fd}
+PROTOMORPHS=${1:-ik_geom_6d,ik_fd_6d}
 if [ -z "${BACKEND}" ]; then
     echo "Error: BACKEND environment variable is not set"
     exit 1

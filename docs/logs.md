@@ -25,34 +25,28 @@ newgrp docker
 testing out all the morphs locally
 
 ```bash
-./scripts/run.morph.sh x86-3090 template && \
-usdview /home/oop/dev/warp-ik/output/template/recording.usd
+./scripts/run.morph.sh x86-3090 ik_geom_3d && \
+usdview /home/oop/dev/warp-ik/output/ik_geom_3d/recording.usd
 ```
 
 ```bash
-./scripts/run.morph.sh x86-3090 jacobian_geom_3d && \
-usdview /home/oop/dev/warp-ik/output/jacobian_geom_3d/recording.usd
+./scripts/run.morph.sh x86-3090 ik_geom_6d && \
+usdview /home/oop/dev/warp-ik/output/ik_geom_6d/recording.usd
 ```
 
 ```bash
-./scripts/run.morph.sh x86-3090 jacobian_geom_6d && \
-usdview /home/oop/dev/warp-ik/output/jacobian_geom_6d/recording.usd
-```
-
-```bash
-./scripts/run.morph.sh x86-3090 jacobian_fd && \
-usdview /home/oop/dev/warp-ik/output/jacobian_fd/recording.usd
+./scripts/run.morph.sh x86-3090 ik_fd_6d && \
+usdview /home/oop/dev/warp-ik/output/ik_fd_6d/recording.usd
 ```
 
 run them all
 
 ```bash
-./scripts/run.morph.sh x86-3090 template && \
-./scripts/run.morph.sh x86-3090 jacobian_geom_3d && \
-./scripts/run.morph.sh x86-3090 jacobian_geom_6d && \
-./scripts/run.morph.sh x86-3090 jacobian_fd && \
-./scripts/run.morph.sh x86-3090 jacobian_dls_6d && \
-./scripts/run.morph.sh x86-3090 optim_adam_6d
+./scripts/run.morph.sh x86-3090 ik_geom_3d && \
+./scripts/run.morph.sh x86-3090 ik_geom_6d && \
+./scripts/run.morph.sh x86-3090 ik_fd_6d && \
+./scripts/run.morph.sh x86-3090 ik_dls_6d && \
+./scripts/run.morph.sh x86-3090 ik_adam_6d
 ```
 
 when logging in fresh to each node, set the environment variables:
@@ -83,7 +77,7 @@ git pull && ./scripts/test.sh
 test the morphs
 
 ```bash
-git pull && ./scripts/test.sh && ./scripts/test.morph.sh && ./scripts/run.morph.sh jacobian_geom_6d
+git pull && ./scripts/test.sh && ./scripts/test.morph.sh && ./scripts/run.morph.sh ik_geom_6d
 ```
 
 run all morphs

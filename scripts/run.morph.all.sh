@@ -20,7 +20,8 @@ if [[ "$BACKEND" != "x86-meerkat" && "$BACKEND" != "arm-rpi" ]]; then
     GPU_FLAG="--gpus all"
 fi
 
-MORPH_FILES=$(find "$ROOT_DIR/warp_ik/morphs" -name "*.py" ! -name "template.py" ! -path "*/\.*")
+# Find all morph files, excluding template.py and hidden files
+MORPH_FILES=$(find "$ROOT_DIR/warp_ik/morphs" -name "*.py" ! -name "base.py" ! -path "*/\.*")
 total_morphs=$(echo "$MORPH_FILES" | wc -w)
 current_morph=0
 

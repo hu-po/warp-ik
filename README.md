@@ -47,22 +47,22 @@ export NUM_ENVS=32
 ./scripts/test.morph.sh
 ```
 
-run a morph by name, e.g. `jacobian_geom_6d`:
+run a morph by name, e.g. `ik_geom_6d`:
 
 ```bash
-./scripts/run.morph.sh jacobian_geom_6d
+./scripts/run.morph.sh ik_geom_6d
 ```
 
-start the evolutionary process using protomorphs `jacobian_geom_3d,jacobian_geom_6d`:
+start the evolutionary process using protomorphs `ik_geom_3d,ik_geom_6d`:
 
 ```bash
-./scripts/evolve.sh jacobian_geom_3d,jacobian_geom_6d
+./scripts/evolve.sh ik_geom_3d,ik_geom_6d
 ```
 
-create a mutation of a morph, check the output in `warp_ik/src/morphs/` folder:
+mutate a specific morph:
 
 ```bash
-./scripts/mutate.sh jacobian_geom_3d
+./scripts/mutate.sh ik_geom_3d
 ```
 
 clean out the output directory:

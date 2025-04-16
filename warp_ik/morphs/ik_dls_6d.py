@@ -1,8 +1,6 @@
-# warp_ik/morphs/jacobian_dls_6d.py
 import warp as wp
 import numpy as np
-import time # For potential debug timing
-import logging as log  # Add logging import
+import logging as log
 
 from warp_ik.src.morph import BaseMorph
 
@@ -35,7 +33,7 @@ class Morph(BaseMorph):
 
     This morph implements the Damped Least Squares IK method. It computes the
     full 6D Geometric Jacobian (J) using Warp's autodifferentiation (`wp.Tape`)
-    similar to jacobian_geom_6d.
+    similar to ik_geom_6d.
 
     Instead of the simple transpose, it uses the DLS update rule:
       delta_q = step_size * J^T * (J * J^T + lambda^2 * I)^(-1) * error_6d

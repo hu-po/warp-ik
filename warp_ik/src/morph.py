@@ -347,7 +347,8 @@ class BaseMorph:
                         entity=self.config.wandb_entity,
                         project=self.config.wandb_project,
                         name=f"{self.config.backend}/{self.config.morph}",
-                        config=config_dict
+                        config=config_dict,
+                        tags=[f"family:{self.config.morph.split('-')[0]}"]  # Strip UUID suffix after dash for family tag
                     )
                     # Update config with the *final* values used
                     self.wandb_run.config.update({
