@@ -164,7 +164,7 @@ search .
 Number of GPUs: 1
 DEVICE Orin (id=0)
 Device compute capability: major=8, minor=7
-Architecture: sm_87
+Architecture: sm_87 (Ampere)
 PCI bus id=0000:00:00.0
 Properties:
 ------------

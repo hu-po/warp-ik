@@ -167,7 +167,7 @@ search ll.local
 Number of GPUs: 1
 DEVICE NVIDIA GH200 480GB (id=0)
 Device compute capability: major=9, minor=0
-Architecture: sm_90
+Architecture: sm_90 (Hopper)
 PCI bus id=0000:DD:00.0
 Properties:
 ------------
