@@ -2,7 +2,7 @@
 
 # `i`nverse `k`inematic solution evolution using nvidia `warp`
 
-uses an llm (e.g. claude,gpt,xai,gemini) to rewrite and improve the code solution to a multi-robot parallel inverse kinematics problem. Iterative rounds to improve solutions, called `morphs`, which are run in docker containers and compete to get the highest score. A basic evolutionary algorithm with mutation and selection improves the morphs over time.
+uses an llm (e.g. claude,gpt,xai,gemini) to rewrite and improve the code solution to a multi-robot parallel inverse kinematics problem. Iterative rounds to improve solutions, called `morphs`, which are run in docker containers and compete to get the highest score. A basic evolutionary algorithm with mutation and selection improves the morphs over time. Uses various compute backends (x86, arm, big gpus, no gpus, etc)
 
 local setup
 
