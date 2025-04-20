@@ -9,7 +9,7 @@ GPU_FLAG=""
 if [[ "$BACKEND" != "x86-meerkat" && "$BACKEND" != "arm-rpi" ]]; then
     GPU_FLAG="--gpus all"
 fi
-docker run $GPU_FLAG -it --rm --user="root" \
+docker run $GPU_FLAG --rm --user="root" \
 warp-ik-$BACKEND bash -c "
 source /root/warp-ik/.venv/bin/activate && \
 source /root/warp-ik/.env && \

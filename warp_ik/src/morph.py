@@ -579,21 +579,32 @@ class BaseMorph:
         self.state = self.model.state(requires_grad=True) # Get state AFTER setting initial joint_q
 
         # -------------------------------------------------------------
-        # If fixed targets were loaded, use them instead of random ones
+        # If fixed targets were loaded, offset each local target by the environment grid location
         # -------------------------------------------------------------
         if self.config.targets_path:
-            self.targets       = self._fixed_target_pos_np
-            self.target_ori    = self._fixed_target_ori_np
-            self.targets_wp    = wp.array(self.targets,    dtype=wp.vec3, device=self.config.device)
+            # Compute base translations for each environment
+            base_translations = np.zeros((self.num_envs, 3), dtype=np.float32)
+            for e in range(self.num_envs):
+                row = e // self.num_rows
+                col = e % self.num_rows
+                base_translations[e, 0] = col * self.arm_spacing_xz
+                base_translations[e, 1] = self.arm_height
+                base_translations[e, 2] = row * self.arm_spacing_xz
+
+            # Add grid spacing to each local target position
+            world_targets = self._fixed_target_pos_np + base_translations
+            self.targets = world_targets
+            self.targets_wp = wp.array(self.targets, dtype=wp.vec3, device=self.config.device)
+            self.target_ori = self._fixed_target_ori_np
             self.target_ori_wp = wp.array(self.target_ori, dtype=wp.quat, device=self.config.device)
-            # Also keep target_origin_np for any code that expects it
+            # Keep target_origin_np for compatibility if needed
             self.target_origin_np = self.targets.copy()
         else:
             # Original behaviour: start with target_origin_wp and allow noise
-            self.targets_wp  = wp.clone(self.target_origin_wp)
+            self.targets_wp = wp.clone(self.target_origin_wp)
             self.target_origin_np = self.target_origin_wp.numpy()
-            self.targets     = self.target_origin_np.copy()
-            self.target_ori  = initial_target_ori_np.copy()
+            self.targets = self.target_origin_np.copy()
+            self.target_ori = initial_target_ori_np.copy()
 
         # Profiler dictionary
         self.profiler = {}
