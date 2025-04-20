@@ -45,6 +45,7 @@ class MorphConfig:
     start_time: float = 0.0 # start time for the simulation
     fps: int = 60 # frames per second
     step_size: float = 1.0 # step size in q space for updates
+    targets_path: str  = f"{assets_dir}/targets/zorya_1k.npy"   # path to N×7 .npy file of target poses
     urdf_path: str = f"{assets_dir}/trossen_arm_description/urdf/generated/wxai/wxai_follower.urdf" # path to the urdf file
     usd_output_path: str = f"{output_dir}/{morph}-recording.usd" # path to the usd file to save the model
     ee_link_offset: tuple[float, float, float] = (0.0, 0.0, 0.0) # offset from the ee_gripper_link to the end effector
@@ -374,6 +375,28 @@ class BaseMorph:
                         wandb.finish(exit_code=1)
                         self.wandb_run = None
 
+        # -------------------------------------------------------------
+        # LOAD FIXED TARGETS (if supplied) *BEFORE* we build anything
+        # -------------------------------------------------------------
+        if self.config.targets_path:
+            tgt_path = os.path.expanduser(self.config.targets_path)
+            if not os.path.isfile(tgt_path):
+                raise FileNotFoundError(f"targets_path not found: {tgt_path}")
+            tgt_np = np.load(tgt_path).astype(np.float32)
+            if tgt_np.ndim != 2 or tgt_np.shape[1] != 7:
+                raise ValueError("targets .npy must be shape (N,7)")
+
+            # Over‑ride env count to the number of rows in the file
+            self.config.num_envs = len(tgt_np)
+
+            # Split into pos / quat  ------------------------------------------------
+            self._fixed_target_pos_np = tgt_np[:, :3].copy()
+            self._fixed_target_ori_np = tgt_np[:, 3:].copy()
+
+            # Disable rollout noise so update_targets_kernel becomes a no‑op
+            self.config.target_spawn_pos_noise = 0.0
+            self.config.target_spawn_rot_noise = 0.0
+
         self.rng = np.random.default_rng(self.config.seed)
         self.num_envs = self.config.num_envs
         self.render_time = self.config.start_time
@@ -555,14 +578,22 @@ class BaseMorph:
         # Get initial state from model
         self.state = self.model.state(requires_grad=True) # Get state AFTER setting initial joint_q
 
-        # Initialize runtime target arrays on GPU
-        self.targets_wp = wp.clone(self.target_origin_wp) # Clone for runtime modification
-
-        # Keep numpy versions for compatibility (if needed by other code)
-        # Ensure these are created *before* the originals are potentially modified
-        self.target_origin_np = self.target_origin_wp.numpy() # Get numpy version from wp array
-        self.targets = self.target_origin_np.copy() # Copy the numpy version
-        self.target_ori = initial_target_ori_np.copy() # Copy the numpy version used for creation
+        # -------------------------------------------------------------
+        # If fixed targets were loaded, use them instead of random ones
+        # -------------------------------------------------------------
+        if self.config.targets_path:
+            self.targets       = self._fixed_target_pos_np
+            self.target_ori    = self._fixed_target_ori_np
+            self.targets_wp    = wp.array(self.targets,    dtype=wp.vec3, device=self.config.device)
+            self.target_ori_wp = wp.array(self.target_ori, dtype=wp.quat, device=self.config.device)
+            # Also keep target_origin_np for any code that expects it
+            self.target_origin_np = self.targets.copy()
+        else:
+            # Original behaviour: start with target_origin_wp and allow noise
+            self.targets_wp  = wp.clone(self.target_origin_wp)
+            self.target_origin_np = self.target_origin_wp.numpy()
+            self.targets     = self.target_origin_np.copy()
+            self.target_ori  = initial_target_ori_np.copy()
 
         # Profiler dictionary
         self.profiler = {}
@@ -575,9 +606,13 @@ class BaseMorph:
             wp.sim.eval_fk(self.model, self.model.joint_q, self.model.joint_qd, None, self.state)
             # Note: self.state is updated in-place by eval_fk
         with wp.ScopedTimer("error_kernel", print=False, active=True, dict=self.profiler, color="green"):
-            # Ensure target arrays are on the correct device
-            targets_pos_wp = wp.array(self.targets, dtype=wp.vec3, device=self.config.device)
-            targets_ori_wp = wp.array(self.target_ori, dtype=wp.quat, device=self.config.device)
+            # Fixed arrays are already on the device; avoid realloc when possible
+            if self.config.targets_path:
+                targets_pos_wp = self.targets_wp
+                targets_ori_wp = self.target_ori_wp
+            else:
+                targets_pos_wp = wp.array(self.targets, dtype=wp.vec3, device=self.config.device)
+                targets_ori_wp = wp.array(self.target_ori, dtype=wp.quat, device=self.config.device)
             wp.launch(
                 compute_ee_error_kernel,
                 dim=self.num_envs,
@@ -742,27 +777,26 @@ def run_morph(config: MorphConfig) -> dict:
                 log.info(f"--- Starting Rollout {i+1}/{config.num_rollouts} ---")
 
                 # --- Update Targets for New Rollout ---
-                with wp.ScopedTimer("target_update", print=False, active=True, dict=morph.profiler):
-                    # Update targets directly on GPU
-                    wp.launch(
-                        kernel=update_targets_kernel,
-                        dim=morph.num_envs,
-                        inputs=[
-                            wp.array(morph.target_origin_np, dtype=wp.vec3, device=morph.config.device), # Pass base origins
-                            morph.initial_arm_orientation, # Pass base orientation
-                            config.target_spawn_pos_noise,
-                            config.target_spawn_rot_noise,
-                            config.seed + i # Simple way to vary seed per rollout
-                        ],
-                        outputs=[
-                            morph.targets_wp, # Update the persistent Warp array
-                            morph.target_ori_wp # Update the persistent Warp array
-                        ],
-                        device=morph.config.device
-                    )
-                    # Update numpy arrays for compatibility with existing code
-                    morph.targets = morph.targets_wp.numpy()
-                    morph.target_ori = morph.target_ori_wp.numpy()
+                # ------------------------------------------------------------------
+                # Skip the random‑noise target update if we are using fixed poses
+                # ------------------------------------------------------------------
+                if not morph.config.targets_path:
+                    with wp.ScopedTimer("target_update", print=False, active=True, dict=morph.profiler):
+                        wp.launch(
+                            kernel=update_targets_kernel,
+                            dim=morph.num_envs,
+                            inputs=[
+                                wp.array(morph.target_origin_np, dtype=wp.vec3, device=morph.config.device),
+                                morph.initial_arm_orientation,
+                                config.target_spawn_pos_noise,
+                                config.target_spawn_rot_noise,
+                                config.seed + i
+                            ],
+                            outputs=[morph.targets_wp, morph.target_ori_wp],
+                            device=morph.config.device
+                        )
+                        morph.targets     = morph.targets_wp.numpy()
+                        morph.target_ori  = morph.target_ori_wp.numpy()
 
                 # --- Training Iterations within Rollout ---
                 for j in range(config.train_iters):
@@ -964,6 +998,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_envs", type=int, default=MorphConfig.num_envs, help="Number of environments to simulate.")
     parser.add_argument("--num_rollouts", type=int, default=MorphConfig.num_rollouts, help="Number of rollouts to perform.")
     parser.add_argument("--train_iters", type=int, default=MorphConfig.train_iters, help="Training iterations per rollout.")
+    parser.add_argument("--targets", type=str, default=MorphConfig.targets_path, help="Path to N×7 .npy of fixed 6‑D targets.")
     args = parser.parse_known_args()[0]
     config = MorphConfig(
         morph=args.morph,
@@ -975,5 +1010,6 @@ if __name__ == "__main__":
         num_envs=args.num_envs,
         num_rollouts=args.num_rollouts,
         train_iters=args.train_iters,
+        targets_path=args.targets,
     )
     run_morph(config)
